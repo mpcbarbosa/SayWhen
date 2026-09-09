@@ -387,8 +387,11 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
           <i><span class="swatch" style="background:var(--yes-soft);border:1px solid var(--yes)"></span>${esc(t(lang, "legendYes"))}</i>
           <i><span class="swatch" style="background:var(--no-soft);border:1px solid var(--no)"></span>${esc(t(lang, "legendNo"))}</i>
           <i><span class="swatch" style="background:var(--surface-2);border:1px solid var(--line)"></span>${esc(t(lang, "legendNone"))}</i>
+          ${best >= 0 ? `<i>${esc(t(lang, "icsHint"))}</i>` : ""}
         </div>
         <div class="row">
+          ${best >= 0 ? `<a class="btn ${poll.closed ? "btn-primary" : ""}"
+             href="/admin/polls/${esc(poll.id)}/ics">${esc(t(lang, "icsBtn"))}</a>` : ""}
           <button class="btn" type="button" id="sumBtn">${esc(t(lang, "copySummary"))}</button>
           <form method="post" action="/admin/polls/${esc(poll.id)}/remind" style="display:inline">
             <button class="btn" type="submit">${esc(t(lang, "remind"))}</button>

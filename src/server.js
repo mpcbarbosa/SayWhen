@@ -7,6 +7,7 @@ import {
   sortSlots, tallies, bestIndex
 } from "./util.js";
 import { loginPage, adminHome, adminPoll, participantPage, simplePage } from "./views.js";
+import { buildIcs } from "./ics.js";
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
@@ -185,6 +186,23 @@ app.post("/admin/polls/:id/close", requireAdmin, async (req, res) => {
   const slot = closed ? Number(req.body.slot) : null;
   await store.setClosed(poll.id, closed, Number.isInteger(slot) && slot >= 0 ? slot : null);
   res.redirect(`/admin/polls/${poll.id}`);
+});
+
+app.get("/admin/polls/:id/ics", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll) return res.status(404).send(simplePage(UI_LANG, "Sondagem não encontrada."));
+  const invitees = await store.getInvitees(poll.id);
+  const slot = poll.chosenSlot != null ? poll.chosenSlot : bestIndex(poll, invitees);
+  if (slot == null || slot < 0 || !poll.slots[slot]) {
+    return res.status(400).send(simplePage(UI_LANG, t(UI_LANG, "tNotEnough") || "Sem horário escolhido."));
+  }
+  const ics = buildIcs(poll, slot, invitees, `${baseUrl(req)}/admin/polls/${poll.id}`);
+  const name = (poll.title || "reuniao").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "reuniao";
+  res.setHeader("Content-Type", "text/calendar; charset=utf-8; method=REQUEST");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}.ics"`);
+  res.send(ics);
 });
 
 app.post("/admin/polls/:id/delete", requireAdmin, async (req, res) => {
