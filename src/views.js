@@ -110,6 +110,14 @@ tr.tally b{font-weight:500;margin:0 5px}
 .list-item{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--line)}
 .list-item:last-child{border-bottom:none}
 .list-item .grow{flex:1;min-width:200px}
+.savebar{position:sticky;bottom:0;z-index:30;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 -2px 12px rgba(32,33,36,.10)}
+.savebar-in{padding:14px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.savebar-in p{flex:1;min-width:180px;margin:0}
+.savebar.dirty{border-color:var(--accent);background:var(--accent-soft)}
+.savebar.dirty p{color:var(--accent-ink);font-weight:500}
+.savebar.saved{border-color:var(--yes);background:var(--yes-soft)}
+.savebar.saved p{color:var(--yes);font-weight:500}
 .toast{position:fixed;left:20px;bottom:20px;background:#3c4043;color:#fff;padding:12px 18px;
   border-radius:4px;font-size:13.5px;max-width:min(420px,calc(100% - 40px));opacity:0;
   pointer-events:none;transition:opacity .18s ease;z-index:60}
@@ -498,44 +506,69 @@ export function participantPage(lang, poll, invitee) {
       <button class="btn btn-text btn-sm" type="button" id="allNo">${esc(t(lang, "allNo"))}</button>
     </div>
 
-    <div class="card"><div class="card-body">
-      <p class="hint" id="status"></p>
-      <div><button class="btn btn-primary" type="button" id="saveBtn">${esc(t(lang, "save"))}</button></div>
-      <div id="okBox" class="notice ok" hidden></div>
-    </div></div>`}
+    <div id="okBox" class="notice ok" hidden></div>
+
+    <div class="savebar" id="savebar">
+      <div class="savebar-in">
+        <p class="hint" id="status"></p>
+        <button class="btn btn-primary" type="button" id="saveBtn">${esc(t(lang, "save"))}</button>
+      </div>
+    </div>`}
 
     ${invitee.answeredAt ? `<p class="hint">${esc(t(lang, "savedAt", { d: fmtDateTime(lang, invitee.answeredAt) }))}</p>` : ""}
   </div>`;
 
   const script = closed ? "" : `
   var answers = ${JSON.stringify(answers)};
+  var dirty = false;
+  var everSaved = ${invitee.answeredAt ? "true" : "false"};
   var STR = {
     missing: ${JSON.stringify(L(lang).missing)},
     allSet: ${JSON.stringify(t(lang, "allSet"))},
     saving: ${JSON.stringify(t(lang, "saving"))},
     save: ${JSON.stringify(t(lang, "save"))},
     saved: ${JSON.stringify(t(lang, "saved"))},
+    unsaved: ${JSON.stringify(t(lang, "unsaved"))},
+    savedShort: ${JSON.stringify(t(lang, "savedShort"))},
     err: ${JSON.stringify(t(lang, "saveError"))}
   };
+  var bar = document.getElementById('savebar');
+  var statusEl = document.getElementById('status');
+
   function paint(){
     document.querySelectorAll('#slots .seg button').forEach(function(b){
       var i=+b.dataset.i, v=+b.dataset.v;
       b.setAttribute('aria-pressed', answers[i]===v ? 'true':'false');
     });
     var done = answers.filter(function(v){return v>0}).length;
-    document.getElementById('status').textContent = done===answers.length
-      ? STR.allSet
-      : STR.missing.split('{n}').join(answers.length-done).split('{t}').join(answers.length);
+    bar.className = 'savebar' + (dirty ? ' dirty' : (everSaved ? ' saved' : ''));
+    if (dirty) {
+      statusEl.textContent = STR.unsaved;
+    } else if (everSaved) {
+      statusEl.textContent = STR.savedShort;
+    } else {
+      statusEl.textContent = done===answers.length
+        ? STR.allSet
+        : STR.missing.split('{n}').join(answers.length-done).split('{t}').join(answers.length);
+    }
   }
+  function mark(){ dirty = true; paint(); }
+
   document.querySelectorAll('#slots .seg button').forEach(function(b){
     b.addEventListener('click', function(){
       var i=+b.dataset.i, v=+b.dataset.v;
       answers[i] = answers[i]===v ? 0 : v;
-      paint();
+      mark();
     });
   });
-  document.getElementById('allYes').addEventListener('click',function(){ answers=answers.map(function(){return 1}); paint(); });
-  document.getElementById('allNo').addEventListener('click',function(){ answers=answers.map(function(){return 2}); paint(); });
+  document.getElementById('allYes').addEventListener('click',function(){ answers=answers.map(function(){return 1}); mark(); });
+  document.getElementById('allNo').addEventListener('click',function(){ answers=answers.map(function(){return 2}); mark(); });
+
+  window.addEventListener('beforeunload', function(e){
+    if (!dirty) return;
+    e.preventDefault(); e.returnValue = '';
+  });
+
   document.getElementById('saveBtn').addEventListener('click', function(){
     var btn=this; btn.disabled=true; btn.textContent=STR.saving;
     fetch(location.pathname, {method:'POST', headers:{'Content-Type':'application/json'},
@@ -545,6 +578,8 @@ export function participantPage(lang, poll, invitee) {
         var ok=document.getElementById('okBox');
         ok.textContent=STR.saved; ok.hidden=false;
         btn.textContent=STR.save; btn.disabled=false;
+        dirty=false; everSaved=true; paint();
+        ok.scrollIntoView({behavior:'smooth', block:'center'});
       })
       .catch(function(){ toast(STR.err); btn.textContent=STR.save; btn.disabled=false; });
   });
