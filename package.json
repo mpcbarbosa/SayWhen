@@ -1,0 +1,18 @@
+{
+  "name": "saywhen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sondagem de disponibilidades: um link por convidado, respostas guardadas, notificacao por email.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.23.0"
+  }
+}

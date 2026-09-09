@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: saywhen
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      # Chave de acesso à área do organizador. O Render gera uma; podes
+      # substituí-la por uma tua no painel (Environment).
+      - key: ADMIN_KEY
+        generateValue: true
+      # Chave da API do Resend, criada em resend.com/api-keys.
+      # Sem ela a aplicação funciona na mesma, mas não envia emails.
+      - key: RESEND_API_KEY
+        sync: false
+      # Remetente. Tem de ser um domínio verificado no Resend.
+      - key: MAIL_FROM
+        value: SayWhen <sondagens@mail.e-news.app>
+      # Endereço público do serviço, usado nos links dos convites.
+      # Ex.: https://saywhen.onrender.com
+      - key: PUBLIC_URL
+        sync: false
+      # Idioma da área do organizador (pt | es | en).
+      - key: UI_LANG
+        value: pt
+      # Ligação Postgres. Sem ela os dados ficam num ficheiro JSON, que no
+      # plano gratuito do Render se perde a cada novo deploy.
+      - key: DATABASE_URL
+        sync: false
