@@ -147,7 +147,7 @@ app.get("/admin/polls/:id", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.status(404).send(simplePage(UI_LANG, "Sondagem não encontrada."));
   const invitees = await store.getInvitees(poll.id);
-  res.send(adminPoll(UI_LANG, poll, invitees, baseUrl(req), req.query.ok || ""));
+  res.send(adminPoll(UI_LANG, poll, invitees, baseUrl(req), req.query.ok || "", mailEnabled()));
 });
 
 app.post("/admin/polls/:id/remind", requireAdmin, async (req, res) => {

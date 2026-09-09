@@ -275,7 +275,7 @@ export function adminHome(lang, polls, flash) {
 }
 
 /* -------------------------------------------------------- admin poll */
-export function adminPoll(lang, poll, invitees, baseUrl, flash) {
+export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
   const pl = poll.lang || lang;
   const ordered = sortSlots(poll.slots);
   const tal = tallies(poll, invitees);
@@ -319,6 +319,17 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash) {
         ${esc(t(lang, "cannotN", { n: tal[best].no }))}${tal[best].none ? " · " + esc(t(lang, "noReplyN", { n: tal[best].none })) : ""}</div>
     </div>` : `<div class="notice">${esc(t(lang, "noAnswersYet"))}</div>`;
 
+  const optsText = ordered.map(({ s }) => `  · ${fmtLong(pl, s, poll.duration)}`).join("\n");
+  const placeText = poll.place ? `, ${poll.place}` : "";
+  const inviteText = (inv) => t(pl, "inviteBody", {
+    n: inv.name, t: poll.title, link: `${baseUrl}/v/${inv.token}`,
+    d: poll.duration, p: placeText, opts: optsText, o: poll.organizerName || ""
+  });
+  const inviteMailto = (inv) =>
+    `mailto:${encodeURIComponent(inv.email)}` +
+    `?subject=${encodeURIComponent(t(pl, "inviteSubject", { t: poll.title }))}` +
+    `&body=${encodeURIComponent(inviteText(inv))}`;
+
   const people = invitees.map(inv => `
     <div class="list-item">
       <div class="grow">
@@ -326,10 +337,14 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash) {
         <span class="pill ${inv.answeredAt ? "done" : ""}">${inv.answeredAt ? esc(t(lang, "answered")) : esc(t(lang, "pending"))}</span>
         <div class="hint">${esc(inv.email)}</div>
       </div>
+      <a class="btn btn-sm btn-primary" href="${esc(inviteMailto(inv))}" target="_blank" rel="noopener">
+        ${esc(t(lang, "inviteByMail"))}</a>
       <button class="btn btn-sm" type="button"
         onclick="copyText('${baseUrl}/v/${esc(inv.token)}', ${JSON.stringify(t(lang, "copied"))})">
         ${esc(t(lang, "copyLink"))}</button>
     </div>`).join("");
+
+  const allLinks = invitees.map(inv => `${inv.name} <${inv.email}>\n${baseUrl}/v/${inv.token}`).join("\n\n");
 
   const body = `
   ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
@@ -380,8 +395,14 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash) {
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>${esc(t(lang, "fPeople"))}</h2></div>
-      <div class="card-body"><div class="list">${people}</div></div>
+      <div class="card-head">
+        <h2>${esc(t(lang, "fPeople"))}</h2>
+        <span class="sub"><button class="btn btn-sm" type="button" id="allBtn">${esc(t(lang, "copyAll"))}</button></span>
+      </div>
+      <div class="card-body">
+        ${mailOn ? "" : `<div class="notice"><b>${esc(t(lang, "mailOffTitle"))}</b><br>${esc(t(lang, "mailOffBody"))}</div>`}
+        <div class="list">${people}</div>
+      </div>
     </section>
   </div>`;
 
@@ -399,6 +420,9 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash) {
   const script = `
   document.getElementById('sumBtn').addEventListener('click',function(){
     copyText(${JSON.stringify(summary)}, ${JSON.stringify(t(lang, "summaryCopied"))});
+  });
+  document.getElementById('allBtn').addEventListener('click',function(){
+    copyText(${JSON.stringify(allLinks)}, ${JSON.stringify(t(lang, "allCopied"))});
   });
   setTimeout(function(){ location.reload(); }, 60000);`;
 
