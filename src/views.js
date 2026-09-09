@@ -181,10 +181,22 @@ export function loginPage(lang, error) {
 /* -------------------------------------------------------- admin home */
 export function adminHome(lang, polls, flash) {
   const today = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
+  // Horas em passos de 15 minutos — nada de :01, :06, :08.
+  const TIMES = [];
+  for (let h = 7; h <= 21; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      if (h === 21 && m > 0) break;
+      TIMES.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    }
+  }
+  const timeOptions = (sel) =>
+    TIMES.map(v => `<option value="${v}"${v === sel ? " selected" : ""}>${v}</option>`).join("");
+
   const slotRow = (i) => `
     <div class="slot-row">
       <input type="date" name="date" value="${i === 0 ? today : ""}">
-      <input type="time" name="time" step="900" value="${i === 0 ? "10:00" : ""}">
+      <select name="time">${timeOptions(["10:00", "15:00", "16:30"][i] || "10:00")}</select>
       <span class="hint"></span>
       <button type="button" class="del" aria-label="x">&times;</button>
     </div>`;
@@ -261,6 +273,8 @@ export function adminHome(lang, polls, flash) {
     var last=box.lastElementChild;
     var row=last.cloneNode(true);
     row.querySelectorAll('input').forEach(function(i){ i.value = i.type==='date' ? (last.querySelector('input[type=date]').value||'') : ''; });
+    var prev=last.querySelector('select[name=time]'), next=row.querySelector('select[name=time]');
+    if (prev && next) next.selectedIndex = Math.min(prev.selectedIndex + 4, next.options.length - 1);
     box.appendChild(row); bindDel(row);
   });
   function bindDel(row){ row.querySelector('.del').addEventListener('click',function(){

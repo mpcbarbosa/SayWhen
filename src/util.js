@@ -90,6 +90,14 @@ export function parsePeople(raw) {
   return out;
 }
 
+// Arredonda para o quarto de hora mais próximo: 10:07 -> 10:00, 10:08 -> 10:15.
+export function snap15(h) {
+  const [hh, mm] = h.split(":").map(Number);
+  let total = Math.round((hh * 60 + mm) / 15) * 15;
+  if (total > 23 * 60 + 45) total = 23 * 60 + 45;
+  return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
+}
+
 export function parseSlots(rawDates, rawTimes) {
   const ds = [].concat(rawDates || []);
   const ts = [].concat(rawTimes || []);
@@ -97,7 +105,7 @@ export function parseSlots(rawDates, rawTimes) {
   for (let i = 0; i < ds.length; i++) {
     const d = String(ds[i] || "").trim();
     const h = String(ts[i] || "").trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && /^\d{2}:\d{2}$/.test(h)) out.push({ d, h });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && /^\d{2}:\d{2}$/.test(h)) out.push({ d, h: snap15(h) });
   }
   return out.sort((a, b) => (a.d + a.h < b.d + b.h ? -1 : 1));
 }
