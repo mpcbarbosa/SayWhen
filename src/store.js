@@ -82,6 +82,15 @@ async function pgDriver() {
         c.release();
       }
     },
+    async addInvitees(pollId, invitees) {
+      for (const i of invitees) {
+        await pool.query(
+          `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)
+           on conflict (token) do nothing`,
+          [i.token, pollId, i.name, i.email]
+        );
+      }
+    },
     async listPolls() {
       const { rows } = await pool.query(`
         select p.*, count(i.token) filter (where i.answered_at is not null) as answered,
@@ -147,6 +156,15 @@ async function fileDriver() {
       for (const i of invitees) {
         db.invitees[i.token] = {
           token: i.token, pollId: poll.id, name: i.name, email: i.email,
+          answers: null, answeredAt: null, invitedAt: null
+        };
+      }
+      await flush();
+    },
+    async addInvitees(pollId, invitees) {
+      for (const i of invitees) {
+        db.invitees[i.token] = {
+          token: i.token, pollId, name: i.name, email: i.email,
           answers: null, answeredAt: null, invitedAt: null
         };
       }

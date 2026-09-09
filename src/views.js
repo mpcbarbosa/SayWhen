@@ -416,6 +416,15 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
       <div class="card-body">
         ${mailOn ? "" : `<div class="notice"><b>${esc(t(lang, "mailOffTitle"))}</b><br>${esc(t(lang, "mailOffBody"))}</div>`}
         <div class="list">${people}</div>
+        <form method="post" action="/admin/polls/${esc(poll.id)}/people" class="stack"
+              style="border-top:1px solid var(--line);padding-top:16px;gap:10px">
+          <label class="field">${esc(t(lang, "addPeople"))}
+            <textarea name="people" rows="3" required
+              placeholder="Sofia Neves sofia@cliente.pt"></textarea>
+          </label>
+          <p class="hint">${esc(t(lang, "addPeopleHint"))}</p>
+          <div><button class="btn btn-primary" type="submit">${esc(t(lang, "addPeopleBtn"))}</button></div>
+        </form>
       </div>
     </section>
   </div>`;

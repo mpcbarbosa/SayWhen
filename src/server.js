@@ -159,6 +159,25 @@ app.post("/admin/polls/:id/remind", requireAdmin, async (req, res) => {
   res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "reminded", { n }))}`);
 });
 
+app.post("/admin/polls/:id/people", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll) return res.redirect("/admin");
+  const existing = await store.getInvitees(poll.id);
+  const known = new Set(existing.map(i => i.email.toLowerCase()));
+  const fresh = parsePeople(req.body.people).filter(p => !known.has(p.email));
+  if (!fresh.length) {
+    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "addedNone"))}`);
+  }
+  const invitees = fresh.map(p => ({ ...p, token: makeToken() }));
+  await store.addInvitees(poll.id, invitees);
+  let msg = t(UI_LANG, "addedN", { n: invitees.length });
+  if (mailEnabled()) {
+    const n = await sendInvites(poll, invitees, baseUrl(req));
+    msg += ` ${n}/${invitees.length} convites enviados.`;
+  }
+  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
+});
+
 app.post("/admin/polls/:id/close", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.redirect("/admin");
