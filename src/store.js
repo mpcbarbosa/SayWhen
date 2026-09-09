@@ -27,6 +27,7 @@ async function pgDriver() {
       duration integer not null,
       place text,
       lang text not null default 'pt',
+      tz text not null default 'Europe/Lisbon',
       organizer_name text,
       organizer_email text,
       slots jsonb not null,
@@ -44,10 +45,11 @@ async function pgDriver() {
       invited_at timestamptz
     );
     create index if not exists invitees_poll_idx on invitees(poll_id);
+    alter table polls add column if not exists tz text not null default 'Europe/Lisbon';
   `);
 
   const rowToPoll = (r) => ({
-    id: r.id, title: r.title, duration: r.duration, place: r.place, lang: r.lang,
+    id: r.id, title: r.title, duration: r.duration, place: r.place, lang: r.lang, tz: r.tz,
     organizerName: r.organizer_name, organizerEmail: r.organizer_email,
     slots: r.slots, createdAt: r.created_at, closed: r.closed, chosenSlot: r.chosen_slot
   });
@@ -63,9 +65,9 @@ async function pgDriver() {
       try {
         await c.query("begin");
         await c.query(
-          `insert into polls (id,title,duration,place,lang,organizer_name,organizer_email,slots)
-           values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [poll.id, poll.title, poll.duration, poll.place, poll.lang,
+          `insert into polls (id,title,duration,place,lang,tz,organizer_name,organizer_email,slots)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [poll.id, poll.title, poll.duration, poll.place, poll.lang, poll.tz,
            poll.organizerName, poll.organizerEmail, JSON.stringify(poll.slots)]
         );
         for (const i of invitees) {

@@ -1,5 +1,8 @@
 import { t, L, LANGS } from "./i18n.js";
-import { esc, fmtDay, fmtLong, endTime, sortSlots, tallies, bestIndex, fmtDateTime } from "./util.js";
+import {
+  esc, fmtDay, fmtLong, endTime, sortSlots, tallies, bestIndex, fmtDateTime,
+  TIMEZONES, DEFAULT_TZ, tzLabel, slotStart
+} from "./util.js";
 
 export const CSS = `
 :root{
@@ -65,6 +68,7 @@ textarea{resize:vertical}
 .p-slot .when{flex:1;min-width:180px}
 .p-slot .when b{font-weight:500;font-variant-numeric:tabular-nums}
 .p-slot .when span{display:block;font-size:12.5px;color:var(--muted)}
+.p-slot .when span.localtime{color:var(--accent-ink);font-weight:500}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
 .seg button{border:none;background:var(--surface);color:var(--muted);padding:8px 22px;
   font-weight:500;border-right:1px solid var(--line);cursor:pointer}
@@ -246,6 +250,14 @@ export function adminHome(lang, polls, flash) {
           </label>
         </div>
         <div class="row">
+          <label class="field" style="flex:1;min-width:260px">${esc(t(lang, "fTz"))}
+            <select name="tz">
+              ${TIMEZONES.map(([id, label]) =>
+                `<option value="${id}"${id === DEFAULT_TZ ? " selected" : ""}>${esc(label)}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="row">
           <label class="field" style="flex:1;min-width:170px">${esc(t(lang, "fOrg"))}
             <input type="text" name="organizerName" required>
           </label>
@@ -380,7 +392,7 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
     <section class="card">
       <div class="card-head">
         <h2>${esc(poll.title)}</h2>
-        <span class="sub">${poll.duration} min${poll.place ? " · " + esc(poll.place) : ""}${poll.closed ? " · " + esc(t(lang, "closed")) : ""}</span>
+        <span class="sub">${poll.duration} min${poll.place ? " · " + esc(poll.place) : ""} · ${esc(t(lang, "tzAdmin", { tz: tzLabel(poll.tz || DEFAULT_TZ) }))}${poll.closed ? " · " + esc(t(lang, "closed")) : ""}</span>
       </div>
       <div class="card-body">
         ${verdict}
@@ -468,18 +480,25 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
 export function participantPage(lang, poll, invitee) {
   const ordered = sortSlots(poll.slots);
   const answers = invitee.answers || poll.slots.map(() => 0);
+  const tz = poll.tz || DEFAULT_TZ;
 
-  const slots = ordered.map(({ s, i }) => `
+  const slots = ordered.map(({ s, i }) => {
+    const start = slotStart(s, tz);
+    const end = new Date(start.getTime() + poll.duration * 60000);
+    return `
     <div class="p-slot">
       <div class="when">
         <b>${esc(fmtDay(lang, s))} &middot; ${esc(s.h)}&ndash;${esc(endTime(s.h, poll.duration))}</b>
         <span>${esc(String(new Date(s.d).getFullYear()))} &middot; ${poll.duration} ${esc(t(lang, "min"))}</span>
+        <span class="localtime" hidden
+              data-start="${start.toISOString()}" data-end="${end.toISOString()}"></span>
       </div>
       <div class="seg">
         <button type="button" data-i="${i}" data-v="1" aria-pressed="${answers[i] === 1}">${esc(t(lang, "yes"))}</button>
         <button type="button" data-i="${i}" data-v="2" aria-pressed="${answers[i] === 2}">${esc(t(lang, "no"))}</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   const closed = poll.closed;
   const body = `
@@ -494,6 +513,8 @@ export function participantPage(lang, poll, invitee) {
         <div><div class="hint">${esc(t(lang, "mWhere"))}</div>${esc(poll.place || t(lang, "tbd"))}</div>
       </div>
     </div></div>
+
+    <div class="notice info" id="tzBanner" hidden></div>
 
     ${closed ? `<div class="notice info">${esc(t(lang, "closedNotice"))}
       ${poll.chosenSlot != null ? "<br>" + esc(t(lang, "chosenNotice", { s: fmtLong(lang, poll.slots[poll.chosenSlot], poll.duration) })) : ""}</div>` : ""}
@@ -518,7 +539,45 @@ export function participantPage(lang, poll, invitee) {
     ${invitee.answeredAt ? `<p class="hint">${esc(t(lang, "savedAt", { d: fmtDateTime(lang, invitee.answeredAt) }))}</p>` : ""}
   </div>`;
 
-  const script = closed ? "" : `
+  // Mostra a hora no relógio de quem abre a página, quando é diferente da do
+  // fuso da sondagem. Só o browser sabe onde a pessoa está.
+  const tzScript = `
+  (function(){
+    var POLL_TZ = ${JSON.stringify(tz)};
+    var TZLABEL = ${JSON.stringify(tzLabel(tz))};
+    var vtz = "";
+    try { vtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch(e) { return; }
+    if (!vtz || vtz === POLL_TZ) return;
+    var loc = ${JSON.stringify(lang)};
+    function fmt(tzid){
+      return {
+        d: new Intl.DateTimeFormat(loc, {weekday:"short", day:"numeric", month:"short", timeZone: tzid}),
+        t: new Intl.DateTimeFormat(loc, {hour:"2-digit", minute:"2-digit", hour12:false, timeZone: tzid})
+      };
+    }
+    var mine = fmt(vtz), theirs = fmt(POLL_TZ);
+    var vname = vtz.split("/").pop().replace(/_/g, " ");
+    var any = false;
+    document.querySelectorAll(".localtime").forEach(function(el){
+      var s = new Date(el.dataset.start), e = new Date(el.dataset.end);
+      var mineTxt = mine.d.format(s) + " " + mine.t.format(s) + "\\u2013" + mine.t.format(e);
+      var theirsTxt = theirs.d.format(s) + " " + theirs.t.format(s) + "\\u2013" + theirs.t.format(e);
+      if (mineTxt === theirsTxt) return;
+      el.textContent = ${JSON.stringify(L(lang).yourTime)}
+        .split("{your}").join(vname).split("{v}").join(mineTxt);
+      el.hidden = false;
+      any = true;
+    });
+    if (any) {
+      var b = document.getElementById("tzBanner");
+      b.textContent = ${JSON.stringify(L(lang).tzBanner)}
+        .split("{tz}").join(TZLABEL).split("{your}").join(vname);
+      b.hidden = false;
+    }
+  })();
+  `;
+
+  const script = tzScript + (closed ? "" : `
   var answers = ${JSON.stringify(answers)};
   var dirty = false;
   var everSaved = ${invitee.answeredAt ? "true" : "false"};
@@ -583,7 +642,7 @@ export function participantPage(lang, poll, invitee) {
       })
       .catch(function(){ toast(STR.err); btn.textContent=STR.save; btn.disabled=false; });
   });
-  paint();`;
+  paint();`);
 
   return layout(lang, poll.title, body, { script });
 }

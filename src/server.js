@@ -4,7 +4,7 @@ import { sendMail, mailEnabled } from "./mail.js";
 import { t } from "./i18n.js";
 import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
-  sortSlots, tallies, bestIndex
+  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel
 } from "./util.js";
 import { loginPage, adminHome, adminPoll, participantPage, simplePage } from "./views.js";
 import { buildIcs } from "./ics.js";
@@ -55,6 +55,7 @@ async function sendInvites(poll, invitees, base) {
   const lang = poll.lang;
   const opts = slotLines(lang, poll);
   const place = poll.place ? `, ${poll.place}` : "";
+  const tzNote = `\n\n${t(lang, "tzNote", { tz: tzLabel(poll.tz || DEFAULT_TZ) })}`;
   const sent = [];
   for (const inv of invitees) {
     const r = await sendMail({
@@ -63,7 +64,7 @@ async function sendInvites(poll, invitees, base) {
       subject: t(lang, "inviteSubject", { t: poll.title }),
       text: t(lang, "inviteBody", {
         n: inv.name, t: poll.title, link: `${base}/v/${inv.token}`,
-        d: poll.duration, p: place, opts, o: poll.organizerName || ""
+        d: poll.duration, p: place, opts: opts + tzNote, o: poll.organizerName || ""
       })
     });
     if (r.ok) sent.push(inv.token);
@@ -131,6 +132,7 @@ app.post("/admin/polls", requireAdmin, async (req, res) => {
     duration: Number(b.duration) || 60,
     place: String(b.place || "").slice(0, 200),
     lang: ["pt", "es", "en"].includes(b.lang) ? b.lang : "pt",
+    tz: TIMEZONES.some(([id]) => id === b.tz) ? b.tz : DEFAULT_TZ,
     organizerName: String(b.organizerName || "").slice(0, 120),
     organizerEmail: String(b.organizerEmail || "").slice(0, 200),
     slots

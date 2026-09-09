@@ -1,27 +1,8 @@
 // Gera um ficheiro .ics (convite de reunião) a partir de uma sondagem fechada.
-// Os horários são guardados em hora local; convertemos para UTC com a regra
-// horária certa para a data, para que Outlook, Google e Apple mostrem todos a
-// mesma hora, mesmo quando os convidados estão noutro fuso.
-
-const TZ = process.env.TZID || "Europe/Lisbon";
-
-function tzOffsetMs(date, tz) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit"
-  });
-  const p = Object.fromEntries(dtf.formatToParts(date).map(x => [x.type, x.value]));
-  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
-  return asUTC - date.getTime();
-}
-
-function zonedToUtc(y, mo, d, h, mi, tz) {
-  const naive = Date.UTC(y, mo - 1, d, h, mi);
-  let ts = naive;
-  for (let i = 0; i < 2; i++) ts = naive - tzOffsetMs(new Date(ts), tz);
-  return new Date(ts);
-}
+// Os horários são guardados na hora local do fuso da sondagem; convertemos para
+// UTC com a regra horária certa para aquela data, para que Outlook, Google e
+// Apple mostrem a hora correta a cada convidado, esteja ele onde estiver.
+import { slotStart, DEFAULT_TZ, tzLabel } from "./util.js";
 
 const stamp = (dt) => dt.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 
@@ -55,10 +36,9 @@ function fold(line) {
  * @param link      endereço da sondagem, para o corpo do convite
  */
 export function buildIcs(poll, slotIndex, invitees, link) {
+  const tz = poll.tz || DEFAULT_TZ;
   const slot = poll.slots[slotIndex];
-  const [y, mo, d] = slot.d.split("-").map(Number);
-  const [h, mi] = slot.h.split(":").map(Number);
-  const start = zonedToUtc(y, mo, d, h, mi, TZ);
+  const start = slotStart(slot, tz);
   const end = new Date(start.getTime() + poll.duration * 60000);
 
   const yes = [], others = [];
@@ -72,6 +52,7 @@ export function buildIcs(poll, slotIndex, invitees, link) {
 
   const desc = [
     poll.place ? `Local: ${poll.place}` : "",
+    `Horário definido em hora de ${tzLabel(tz)}`,
     `Disponibilidade recolhida em ${link}`,
     yes.length ? `Confirmaram poder: ${yes.map(i => i.name).join(", ")}` : "",
     others.length ? `Sem confirmação: ${others.map(i => i.name).join(", ")}` : ""

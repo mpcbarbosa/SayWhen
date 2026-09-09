@@ -36,6 +36,54 @@ export function fmtDateTime(lang, iso) {
   return `${L(lang).dow[dt.getDay()]} ${dt.getDate()} ${L(lang).mon[dt.getMonth()]} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
 
+/* ------------------------------------------------------------ fusos */
+export const DEFAULT_TZ = process.env.TZID || "Europe/Lisbon";
+
+// Fusos oferecidos ao organizador. O rótulo é o que aparece na interface.
+export const TIMEZONES = [
+  ["Europe/Lisbon", "Lisboa (Portugal continental, Madeira)"],
+  ["Europe/Madrid", "Madrid (Espanha peninsular)"],
+  ["Atlantic/Canary", "Canárias"],
+  ["Atlantic/Azores", "Açores"],
+  ["Europe/London", "Londres"],
+  ["Europe/Paris", "Paris / Bruxelas / Amesterdão"],
+  ["Europe/Berlin", "Berlim / Roma / Zurique"],
+  ["America/Sao_Paulo", "São Paulo"],
+  ["America/New_York", "Nova Iorque"],
+  ["UTC", "UTC"]
+];
+
+export function tzLabel(tz) {
+  const found = TIMEZONES.find(([id]) => id === tz);
+  return found ? found[1].replace(/\s*\(.*\)$/, "") : (tz || DEFAULT_TZ);
+}
+
+function tzOffsetMs(date, tz) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+  const p = Object.fromEntries(dtf.formatToParts(date).map(x => [x.type, x.value]));
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  return asUTC - date.getTime();
+}
+
+// Uma data/hora local num fuso -> o instante exato (UTC).
+export function zonedToUtc(y, mo, d, h, mi, tz) {
+  const naive = Date.UTC(y, mo - 1, d, h, mi);
+  let ts = naive;
+  for (let i = 0; i < 2; i++) ts = naive - tzOffsetMs(new Date(ts), tz);
+  return new Date(ts);
+}
+
+// O instante de início de um horário, no fuso da sondagem.
+export function slotStart(slot, tz) {
+  const [y, mo, d] = slot.d.split("-").map(Number);
+  const [h, mi] = slot.h.split(":").map(Number);
+  return zonedToUtc(y, mo, d, h, mi, tz || DEFAULT_TZ);
+}
+
 export function sortSlots(slots) {
   return slots
     .map((s, i) => ({ s, i }))
