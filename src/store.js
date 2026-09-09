@@ -33,7 +33,8 @@ async function pgDriver() {
       slots jsonb not null,
       created_at timestamptz not null default now(),
       closed boolean not null default false,
-      chosen_slot integer
+      chosen_slot integer,
+      status text not null default 'open'
     );
     create table if not exists invitees (
       token text primary key,
@@ -46,12 +47,14 @@ async function pgDriver() {
     );
     create index if not exists invitees_poll_idx on invitees(poll_id);
     alter table polls add column if not exists tz text not null default 'Europe/Lisbon';
+    alter table polls add column if not exists status text not null default 'open';
   `);
 
   const rowToPoll = (r) => ({
     id: r.id, title: r.title, duration: r.duration, place: r.place, lang: r.lang, tz: r.tz,
     organizerName: r.organizer_name, organizerEmail: r.organizer_email,
-    slots: r.slots, createdAt: r.created_at, closed: r.closed, chosenSlot: r.chosen_slot
+    slots: r.slots, createdAt: r.created_at, closed: r.closed, chosenSlot: r.chosen_slot,
+    status: r.status || "open"
   });
   const rowToInvitee = (r) => ({
     token: r.token, pollId: r.poll_id, name: r.name, email: r.email,
@@ -65,10 +68,10 @@ async function pgDriver() {
       try {
         await c.query("begin");
         await c.query(
-          `insert into polls (id,title,duration,place,lang,tz,organizer_name,organizer_email,slots)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          `insert into polls (id,title,duration,place,lang,tz,organizer_name,organizer_email,slots,status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [poll.id, poll.title, poll.duration, poll.place, poll.lang, poll.tz,
-           poll.organizerName, poll.organizerEmail, JSON.stringify(poll.slots)]
+           poll.organizerName, poll.organizerEmail, JSON.stringify(poll.slots), poll.status || "open"]
         );
         for (const i of invitees) {
           await c.query(
@@ -89,6 +92,24 @@ async function pgDriver() {
         await pool.query(
           `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)
            on conflict (token) do nothing`,
+          [i.token, pollId, i.name, i.email]
+        );
+      }
+    },
+    async updatePoll(pollId, f) {
+      await pool.query(
+        `update polls set title=$2, duration=$3, place=$4, lang=$5, tz=$6,
+         organizer_name=$7, organizer_email=$8, slots=$9, status=$10 where id=$1`,
+        [pollId, f.title, f.duration, f.place, f.lang, f.tz,
+         f.organizerName, f.organizerEmail, JSON.stringify(f.slots), f.status]
+      );
+    },
+    // Só usado em rascunhos, onde ainda não há respostas a preservar.
+    async replaceInvitees(pollId, invitees) {
+      await pool.query("delete from invitees where poll_id=$1", [pollId]);
+      for (const i of invitees) {
+        await pool.query(
+          `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)`,
           [i.token, pollId, i.name, i.email]
         );
       }
@@ -154,7 +175,8 @@ async function fileDriver() {
   return {
     kind: "file",
     async createPoll(poll, invitees) {
-      db.polls[poll.id] = { ...poll, createdAt: new Date().toISOString(), closed: false, chosenSlot: null };
+      db.polls[poll.id] = { ...poll, status: poll.status || "open",
+        createdAt: new Date().toISOString(), closed: false, chosenSlot: null };
       for (const i of invitees) {
         db.invitees[i.token] = {
           token: i.token, pollId: poll.id, name: i.name, email: i.email,
@@ -172,6 +194,22 @@ async function fileDriver() {
       }
       await flush();
     },
+    async updatePoll(pollId, f) {
+      const p = db.polls[pollId];
+      if (!p) return;
+      Object.assign(p, f);
+      await flush();
+    },
+    async replaceInvitees(pollId, invitees) {
+      for (const [tk, i] of Object.entries(db.invitees)) if (i.pollId === pollId) delete db.invitees[tk];
+      for (const i of invitees) {
+        db.invitees[i.token] = {
+          token: i.token, pollId, name: i.name, email: i.email,
+          answers: null, answeredAt: null, invitedAt: null
+        };
+      }
+      await flush();
+    },
     async listPolls() {
       return Object.values(db.polls)
         .map(p => {
@@ -180,7 +218,10 @@ async function fileDriver() {
         })
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     },
-    async getPoll(id) { return db.polls[id] || null; },
+    async getPoll(id) {
+      const p = db.polls[id];
+      return p ? { status: "open", ...p } : null;
+    },
     async getInvitees(pollId) {
       return Object.values(db.invitees)
         .filter(i => i.pollId === pollId)

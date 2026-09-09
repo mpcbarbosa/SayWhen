@@ -6,7 +6,7 @@ import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
   sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel
 } from "./util.js";
-import { loginPage, adminHome, adminPoll, participantPage, simplePage } from "./views.js";
+import { loginPage, adminHome, adminDraft, adminPoll, participantPage, simplePage } from "./views.js";
 import { buildIcs } from "./ics.js";
 
 const PORT = process.env.PORT || 3000;
@@ -95,6 +95,28 @@ async function notifyOrganizer(poll, invitee, invitees, base) {
   });
 }
 
+
+// Lê o formulário de sondagem (criação e edição de rascunho).
+function readPollForm(b) {
+  return {
+    title: String(b.title || "").slice(0, 200),
+    duration: Number(b.duration) || 60,
+    place: String(b.place || "").slice(0, 200),
+    lang: ["pt", "es", "en"].includes(b.lang) ? b.lang : "pt",
+    tz: TIMEZONES.some(([id]) => id === b.tz) ? b.tz : DEFAULT_TZ,
+    organizerName: String(b.organizerName || "").slice(0, 120),
+    organizerEmail: String(b.organizerEmail || "").slice(0, 200),
+    slots: parseSlots(b.date, b.time)
+  };
+}
+
+// Junta o organizador à lista, se ele quiser participar.
+function withOrganizer(people, poll, selfJoin) {
+  const email = (poll.organizerEmail || "").toLowerCase();
+  if (!selfJoin || !email || people.some(p => p.email === email)) return people;
+  return [{ name: poll.organizerName || email, email }, ...people];
+}
+
 /* -------------------------------------------------------------- admin */
 app.get("/", (req, res) => res.redirect("/admin"));
 
@@ -121,28 +143,53 @@ app.get("/admin", requireAdmin, async (req, res) => {
 
 app.post("/admin/polls", requireAdmin, async (req, res) => {
   const b = req.body;
-  const slots = parseSlots(b.date, b.time);
-  const people = parsePeople(b.people);
-  if (!b.title || !slots.length || !people.length) {
-    return res.status(400).send(simplePage(UI_LANG, "Faltam dados: assunto, horários ou convidados."));
+  const draft = b.action === "draft";
+  const fields = readPollForm(b);
+  if (!draft && (!fields.title || !fields.slots.length || !parsePeople(b.people).length)) {
+    return res.status(400).send(simplePage(UI_LANG, t(UI_LANG, "draftIncomplete")));
   }
-  const poll = {
-    id: makeId(),
-    title: String(b.title).slice(0, 200),
-    duration: Number(b.duration) || 60,
-    place: String(b.place || "").slice(0, 200),
-    lang: ["pt", "es", "en"].includes(b.lang) ? b.lang : "pt",
-    tz: TIMEZONES.some(([id]) => id === b.tz) ? b.tz : DEFAULT_TZ,
-    organizerName: String(b.organizerName || "").slice(0, 120),
-    organizerEmail: String(b.organizerEmail || "").slice(0, 200),
-    slots
-  };
+  const poll = { id: makeId(), ...fields, status: draft ? "draft" : "open" };
+  const people = withOrganizer(parsePeople(b.people), poll, Boolean(b.selfJoin));
   const invitees = people.map(p => ({ ...p, token: makeToken() }));
   await store.createPoll(poll, invitees);
+
+  if (draft) {
+    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
+  }
   const n = await sendInvites(poll, invitees, baseUrl(req));
   const msg = mailEnabled()
     ? `${n}/${invitees.length} convites enviados.`
-    : `Sondagem criada. Envio de email desligado (falta RESEND_API_KEY) — copia os links pessoais na lista.`;
+    : `Sondagem criada. Envio de email desligado — usa "Convidar pelo meu email" na lista.`;
+  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
+});
+
+// Guardar ou publicar um rascunho.
+app.post("/admin/polls/:id/update", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll) return res.redirect("/admin");
+  if (poll.status !== "draft") return res.redirect(`/admin/polls/${poll.id}`);
+
+  const b = req.body;
+  const publish = b.action === "publish";
+  const fields = readPollForm(b);
+  const people = withOrganizer(parsePeople(b.people), fields, Boolean(b.selfJoin));
+
+  if (publish && (!fields.title || !fields.slots.length || !people.length)) {
+    return res.status(400).send(simplePage(UI_LANG, t(UI_LANG, "draftIncomplete")));
+  }
+
+  await store.updatePoll(poll.id, { ...fields, status: publish ? "open" : "draft" });
+  const invitees = people.map(p => ({ ...p, token: makeToken() }));
+  await store.replaceInvitees(poll.id, invitees);
+
+  if (!publish) {
+    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
+  }
+  const full = { ...poll, ...fields, status: "open" };
+  const n = await sendInvites(full, invitees, baseUrl(req));
+  const msg = mailEnabled()
+    ? `${n}/${invitees.length} convites enviados.`
+    : `Sondagem publicada. Envio de email desligado — usa "Convidar pelo meu email" na lista.`;
   res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
 });
 
@@ -150,6 +197,9 @@ app.get("/admin/polls/:id", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.status(404).send(simplePage(UI_LANG, "Sondagem não encontrada."));
   const invitees = await store.getInvitees(poll.id);
+  if (poll.status === "draft") {
+    return res.send(adminDraft(UI_LANG, poll, invitees, req.query.ok || ""));
+  }
   res.send(adminPoll(UI_LANG, poll, invitees, baseUrl(req), req.query.ok || "", mailEnabled()));
 });
 
@@ -179,6 +229,19 @@ app.post("/admin/polls/:id/people", requireAdmin, async (req, res) => {
     msg += ` ${n}/${invitees.length} convites enviados.`;
   }
   res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
+});
+
+app.post("/admin/polls/:id/join", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll || !poll.organizerEmail) return res.redirect("/admin");
+  const email = poll.organizerEmail.toLowerCase();
+  const existing = await store.getInvitees(poll.id);
+  if (!existing.some(i => i.email.toLowerCase() === email)) {
+    await store.addInvitees(poll.id, [{
+      name: poll.organizerName || email, email, token: makeToken()
+    }]);
+  }
+  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "joined"))}`);
 });
 
 app.post("/admin/polls/:id/close", requireAdmin, async (req, res) => {
@@ -218,6 +281,9 @@ app.get("/v/:token", async (req, res) => {
   if (!inv) return res.status(404).send(simplePage(UI_LANG, t(UI_LANG, "badToken")));
   const poll = await store.getPoll(inv.pollId);
   if (!poll) return res.status(404).send(simplePage(UI_LANG, t(UI_LANG, "badToken")));
+  if (poll.status === "draft") {
+    return res.status(404).send(simplePage(poll.lang, t(poll.lang, "notOpenYet"), "info"));
+  }
   res.send(participantPage(poll.lang, poll, inv));
 });
 
@@ -226,7 +292,7 @@ app.post("/v/:token", async (req, res) => {
   if (!inv) return res.status(404).json({ error: "unknown token" });
   const poll = await store.getPoll(inv.pollId);
   if (!poll) return res.status(404).json({ error: "unknown poll" });
-  if (poll.closed) return res.status(409).json({ error: "closed" });
+  if (poll.closed || poll.status === "draft") return res.status(409).json({ error: "closed" });
 
   const raw = Array.isArray(req.body.answers) ? req.body.answers : [];
   const answers = poll.slots.map((_, i) => {

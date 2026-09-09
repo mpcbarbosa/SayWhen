@@ -191,7 +191,9 @@ export function loginPage(lang, error) {
 }
 
 /* -------------------------------------------------------- admin home */
-export function adminHome(lang, polls, flash) {
+/* ---------------------------------------------- formulário partilhado */
+// Usado para criar uma sondagem nova e para editar um rascunho.
+function pollForm(lang, { action, poll, people, formId, primary, draft }) {
   const today = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   // Horas em passos de 15 minutos — nada de :01, :06, :08.
@@ -205,47 +207,39 @@ export function adminHome(lang, polls, flash) {
   const timeOptions = (sel) =>
     TIMES.map(v => `<option value="${v}"${v === sel ? " selected" : ""}>${v}</option>`).join("");
 
-  const slotRow = (i) => `
+  const slotRow = (d, h) => `
     <div class="slot-row">
-      <input type="date" name="date" value="${i === 0 ? today : ""}">
-      <select name="time">${timeOptions(["10:00", "15:00", "16:30"][i] || "10:00")}</select>
+      <input type="date" name="date" value="${esc(d)}">
+      <select name="time">${timeOptions(h)}</select>
       <span class="hint"></span>
       <button type="button" class="del" aria-label="x">&times;</button>
     </div>`;
 
-  const list = polls.length
-    ? `<div class="list">${polls.map(p => `
-      <div class="list-item">
-        <div class="grow">
-          <a href="/admin/polls/${esc(p.id)}"><b>${esc(p.title)}</b></a>
-          ${p.closed ? `<span class="pill done">${esc(t(lang, "closed"))}</span>` : ""}
-          <div class="hint">${esc(t(lang, "answeredOf", { a: p.answered, t: p.total }))} ·
-            ${esc(t(lang, "createdAt", { d: fmtDateTime(lang, p.createdAt) }))}</div>
-        </div>
-        <a class="btn btn-sm" href="/admin/polls/${esc(p.id)}">${esc(t(lang, "openPoll"))}</a>
-      </div>`).join("")}</div>`
-    : `<p class="hint">${esc(t(lang, "noPolls"))}</p>`;
+  const slots = (poll && poll.slots && poll.slots.length)
+    ? poll.slots.map(s => slotRow(s.d, s.h)).join("")
+    : slotRow(today, "10:00") + slotRow(today, "15:00") + slotRow(today, "16:30");
 
-  const body = `
-  ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
-  <div class="stack">
-    <section class="card">
-      <div class="card-head"><h2>${esc(t(lang, "newPoll"))}</h2></div>
-      <form class="card-body" method="post" action="/admin/polls" id="newPoll">
+  const v = (x, fallback = "") => esc(poll && poll[x] != null && poll[x] !== "" ? poll[x] : fallback);
+  const dur = poll ? String(poll.duration) : "60";
+  const plang = poll && poll.lang ? poll.lang : lang;
+  const ptz = poll && poll.tz ? poll.tz : DEFAULT_TZ;
+  const peopleText = (people || []).map(i => `${i.name} ${i.email}`).join("\n");
+
+  return `
+      <form class="card-body" method="post" action="${action}" id="${formId}">
         <div class="row">
           <label class="field" style="flex:2;min-width:240px">${esc(t(lang, "fTitle"))}
-            <input type="text" name="title" required>
+            <input type="text" name="title" value="${v("title")}" ${draft ? "" : "required"}>
           </label>
           <label class="field" style="flex:1;min-width:130px">${esc(t(lang, "fDur"))}
             <select name="duration">
-              <option value="30">30 min</option><option value="45">45 min</option>
-              <option value="60" selected>1 h</option><option value="90">1 h 30</option>
-              <option value="120">2 h</option>
+              ${[[30, "30 min"], [45, "45 min"], [60, "1 h"], [90, "1 h 30"], [120, "2 h"]]
+                .map(([val, lbl]) => `<option value="${val}"${String(val) === dur ? " selected" : ""}>${lbl}</option>`).join("")}
             </select>
           </label>
           <label class="field" style="flex:1;min-width:130px">${esc(t(lang, "fLang"))}
             <select name="lang">
-              ${LANGS.map(l => `<option value="${l}"${l === lang ? " selected" : ""}>${esc(L(l).name)}</option>`).join("")}
+              ${LANGS.map(l => `<option value="${l}"${l === plang ? " selected" : ""}>${esc(L(l).name)}</option>`).join("")}
             </select>
           </label>
         </div>
@@ -253,41 +247,43 @@ export function adminHome(lang, polls, flash) {
           <label class="field" style="flex:1;min-width:260px">${esc(t(lang, "fTz"))}
             <select name="tz">
               ${TIMEZONES.map(([id, label]) =>
-                `<option value="${id}"${id === DEFAULT_TZ ? " selected" : ""}>${esc(label)}</option>`).join("")}
+                `<option value="${id}"${id === ptz ? " selected" : ""}>${esc(label)}</option>`).join("")}
             </select>
           </label>
         </div>
         <div class="row">
           <label class="field" style="flex:1;min-width:170px">${esc(t(lang, "fOrg"))}
-            <input type="text" name="organizerName" required>
+            <input type="text" name="organizerName" value="${v("organizerName")}" ${draft ? "" : "required"}>
           </label>
           <label class="field" style="flex:1;min-width:200px">${esc(t(lang, "fMail"))}
-            <input type="email" name="organizerEmail" required>
+            <input type="email" name="organizerEmail" value="${v("organizerEmail")}" ${draft ? "" : "required"}>
           </label>
           <label class="field" style="flex:1;min-width:170px">${esc(t(lang, "fPlace"))}
-            <input type="text" name="place">
+            <input type="text" name="place" value="${v("place")}">
           </label>
         </div>
         <div>
           <h3 style="margin-bottom:8px">${esc(t(lang, "fSlots"))}</h3>
-          <div class="stack" id="slots" style="gap:8px">${slotRow(0)}${slotRow(1)}${slotRow(2)}</div>
+          <div class="stack" id="slots" style="gap:8px">${slots}</div>
           <div style="margin-top:10px"><button class="btn btn-sm" type="button" id="addSlot">+ ${esc(t(lang, "addSlot"))}</button></div>
         </div>
         <label class="field">${esc(t(lang, "fPeople"))}
-          <textarea name="people" rows="5" required placeholder="Ana Ribeiro ana@cliente.pt&#10;Bruno Cardoso bruno@empresa.com"></textarea>
+          <textarea name="people" rows="5" ${draft ? "" : "required"}
+            placeholder="Ana Ribeiro ana@cliente.pt&#10;Bruno Cardoso bruno@empresa.com">${esc(peopleText)}</textarea>
         </label>
         <p class="hint">${esc(t(lang, "fPeopleHint"))}</p>
-        <div><button class="btn btn-primary" type="submit" id="createBtn">${esc(t(lang, "createBtn"))}</button></div>
-      </form>
-    </section>
+        <label class="row" style="gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" name="selfJoin" value="1" checked style="width:auto">
+          ${esc(t(lang, "selfJoin"))}
+        </label>
+        <div class="row">
+          <button class="btn btn-primary" type="submit" name="action" value="publish" id="createBtn">${esc(primary)}</button>
+          <button class="btn" type="submit" name="action" value="draft" formnovalidate>${esc(t(lang, "saveDraft"))}</button>
+        </div>
+      </form>`;
+}
 
-    <section class="card">
-      <div class="card-head"><h2>${esc(t(lang, "adminTitle"))}</h2></div>
-      <div class="card-body">${list}</div>
-    </section>
-  </div>`;
-
-  const script = `
+const FORM_SCRIPT = (lang, formId) => `
   document.getElementById('addSlot').addEventListener('click',function(){
     var box=document.getElementById('slots');
     var last=box.lastElementChild;
@@ -300,12 +296,76 @@ export function adminHome(lang, polls, flash) {
   function bindDel(row){ row.querySelector('.del').addEventListener('click',function(){
     if(document.querySelectorAll('#slots .slot-row').length>1) row.remove(); }); }
   document.querySelectorAll('#slots .slot-row').forEach(bindDel);
-  document.getElementById('newPoll').addEventListener('submit',function(){
-    var b=document.getElementById('createBtn'); b.disabled=true; b.textContent=${JSON.stringify(t(lang, "creating"))};
+  document.getElementById('${formId}').addEventListener('submit',function(e){
+    if (e.submitter && e.submitter.value === 'draft') return;
+    var b=document.getElementById('createBtn');
+    // Desativar já retirava o botão dos dados enviados — só depois da serialização.
+    setTimeout(function(){ b.disabled=true; b.textContent=${JSON.stringify(t(lang, "creating"))}; }, 0);
   });`;
 
+/* -------------------------------------------------------- admin home */
+export function adminHome(lang, polls, flash) {
+  const list = polls.length
+    ? `<div class="list">${polls.map(p => `
+      <div class="list-item">
+        <div class="grow">
+          <a href="/admin/polls/${esc(p.id)}"><b>${esc(p.title) || esc(t(lang, "untitled"))}</b></a>
+          ${p.status === "draft" ? `<span class="pill">${esc(t(lang, "draftTag"))}</span>` : ""}
+          ${p.closed ? `<span class="pill done">${esc(t(lang, "closed"))}</span>` : ""}
+          <div class="hint">${p.status === "draft"
+            ? esc(t(lang, "draftHint"))
+            : esc(t(lang, "answeredOf", { a: p.answered, t: p.total }))} ·
+            ${esc(t(lang, "createdAt", { d: fmtDateTime(lang, p.createdAt) }))}</div>
+        </div>
+        <a class="btn btn-sm" href="/admin/polls/${esc(p.id)}">${esc(t(lang, p.status === "draft" ? "editDraft" : "openPoll"))}</a>
+      </div>`).join("")}</div>`
+    : `<p class="hint">${esc(t(lang, "noPolls"))}</p>`;
+
+  const body = `
+  ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
+  <div class="stack">
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "newPoll"))}</h2></div>
+      ${pollForm(lang, { action: "/admin/polls", poll: null, people: [], formId: "newPoll", primary: t(lang, "createBtn"), draft: false })}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "adminTitle"))}</h2></div>
+      <div class="card-body">${list}</div>
+    </section>
+  </div>`;
+
   const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
-  return layout(lang, t(lang, "adminTitle"), body, { script, rightSlot: right });
+  return layout(lang, t(lang, "adminTitle"), body, { script: FORM_SCRIPT(lang, "newPoll"), rightSlot: right });
+}
+
+/* ------------------------------------------------------- admin draft */
+export function adminDraft(lang, poll, people, flash) {
+  const body = `
+  ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
+  <div class="stack">
+    <div class="row">
+      <a class="btn btn-text btn-sm" href="/admin">&larr; ${esc(t(lang, "back"))}</a>
+    </div>
+    <div class="notice info">${esc(t(lang, "draftNotice"))}</div>
+    <section class="card">
+      <div class="card-head">
+        <h2>${esc(poll.title) || esc(t(lang, "untitled"))}</h2>
+        <span class="sub">${esc(t(lang, "draftTag"))}</span>
+      </div>
+      ${pollForm(lang, {
+        action: `/admin/polls/${esc(poll.id)}/update`, poll, people,
+        formId: "draftForm", primary: t(lang, "publishDraft"), draft: true
+      })}
+    </section>
+    <form method="post" action="/admin/polls/${esc(poll.id)}/delete"
+          onsubmit="return confirm(${JSON.stringify(t(lang, "confirmDelete"))})">
+      <button class="btn btn-text btn-sm btn-danger" type="submit">${esc(t(lang, "deletePoll"))}</button>
+    </form>
+  </div>`;
+
+  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  return layout(lang, poll.title || t(lang, "untitled"), body, { script: FORM_SCRIPT(lang, "draftForm"), rightSlot: right });
 }
 
 /* -------------------------------------------------------- admin poll */
@@ -364,15 +424,22 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
     `?subject=${encodeURIComponent(t(pl, "inviteSubject", { t: poll.title }))}` +
     `&body=${encodeURIComponent(inviteText(inv))}`;
 
+  const orgEmail = (poll.organizerEmail || "").toLowerCase();
+  const isSelf = (inv) => orgEmail && inv.email.toLowerCase() === orgEmail;
+  const selfIn = invitees.some(isSelf);
+
   const people = invitees.map(inv => `
     <div class="list-item">
       <div class="grow">
         <b>${esc(inv.name)}</b>
+        ${isSelf(inv) ? `<span class="pill">${esc(t(lang, "meTag"))}</span>` : ""}
         <span class="pill ${inv.answeredAt ? "done" : ""}">${inv.answeredAt ? esc(t(lang, "answered")) : esc(t(lang, "pending"))}</span>
         <div class="hint">${esc(inv.email)}</div>
       </div>
-      <a class="btn btn-sm btn-primary" href="${esc(inviteMailto(inv))}" target="_blank" rel="noopener">
-        ${esc(t(lang, "inviteByMail"))}</a>
+      ${isSelf(inv)
+        ? `<a class="btn btn-sm btn-primary" href="/v/${esc(inv.token)}">${esc(t(lang, "answerBtn"))}</a>`
+        : `<a class="btn btn-sm btn-primary" href="${esc(inviteMailto(inv))}" target="_blank" rel="noopener">
+             ${esc(t(lang, "inviteByMail"))}</a>`}
       <button class="btn btn-sm" type="button"
         onclick="copyText('${baseUrl}/v/${esc(inv.token)}', ${JSON.stringify(t(lang, "copied"))})">
         ${esc(t(lang, "copyLink"))}</button>
@@ -438,6 +505,10 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
       </div>
       <div class="card-body">
         ${mailOn ? "" : `<div class="notice"><b>${esc(t(lang, "mailOffTitle"))}</b><br>${esc(t(lang, "mailOffBody"))}</div>`}
+        ${selfIn || !orgEmail ? "" : `
+        <form method="post" action="/admin/polls/${esc(poll.id)}/join">
+          <button class="btn" type="submit">${esc(t(lang, "joinBtn"))}</button>
+        </form>`}
         <div class="list">${people}</div>
         <form method="post" action="/admin/polls/${esc(poll.id)}/people" class="stack"
               style="border-top:1px solid var(--line);padding-top:16px;gap:10px">
