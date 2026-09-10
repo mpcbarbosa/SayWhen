@@ -4,7 +4,7 @@ import { sendMail, mailEnabled } from "./mail.js";
 import { t } from "./i18n.js";
 import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
-  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel
+  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel, snap15
 } from "./util.js";
 import { loginPage, adminHome, adminDraft, adminEdit, adminPoll, participantPage, simplePage } from "./views.js";
 import { buildIcs } from "./ics.js";
@@ -82,13 +82,20 @@ async function notifyOrganizer(poll, invitee, invitees, base) {
     return `  · ${fmtDay(lang, s)} ${s.h} — ${v === 1 ? t(lang, "ansYes") : v === 2 ? t(lang, "ansNo") : t(lang, "ansNone")}`;
   }).join("\n");
 
+  const extraLines = [];
+  if ((invitee.note || "").trim()) extraLines.push(`\nNota: ${invitee.note.trim()}`);
+  if ((invitee.suggestions || []).length) {
+    extraLines.push("\nSugeriu: " + invitee.suggestions
+      .map(sg => fmtLong(lang, sg, poll.duration)).join("; "));
+  }
+
   const all = answered === invitees.length;
   await sendMail({
     to: poll.organizerEmail,
     subject: t(lang, all ? "allInSubject" : "notifySubject", { n: invitee.name, t: poll.title }),
     text: t(lang, "notifyBody", {
       n: invitee.name, e: invitee.email, t: poll.title, answers: lines,
-      a: answered, total: invitees.length,
+      a: answered, total: invitees.length, extra: extraLines.join("\n"),
       best: best >= 0 ? fmtLong(lang, poll.slots[best], poll.duration) : "—",
       link: `${base}/admin/polls/${poll.id}`
     })
@@ -306,6 +313,52 @@ app.post("/admin/polls/:id/join", requireAdmin, async (req, res) => {
   res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "joined"))}`);
 });
 
+app.post("/admin/polls/:id/adopt", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll) return res.redirect("/admin");
+  const d = String(req.body.d || ""), h = String(req.body.h || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{2}:\d{2}$/.test(h)) {
+    return res.redirect(`/admin/polls/${poll.id}`);
+  }
+  const slot = { d, h: snap15(h) };
+  const key = (x) => `${x.d} ${x.h}`;
+  if (poll.slots.some(x => key(x) === key(slot))) {
+    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "adoptDup"))}`);
+  }
+
+  const invitees = await store.getInvitees(poll.id);
+  const oldKeys = poll.slots.map(key);
+  const nextSlots = [...poll.slots, slot].sort((a, b) => (a.d + a.h < b.d + b.h ? -1 : 1));
+  const newKeys = nextSlots.map(key);
+  const map = newKeys.map(k => oldKeys.indexOf(k));
+
+  await store.updatePoll(poll.id, {
+    title: poll.title, duration: poll.duration, place: poll.place, lang: poll.lang,
+    tz: poll.tz, organizerName: poll.organizerName, organizerEmail: poll.organizerEmail,
+    slots: nextSlots, status: poll.status
+  });
+
+  const newIdx = newKeys.indexOf(key(slot));
+  for (const inv of invitees) {
+    const suggested = (inv.suggestions || []).some(sg => key(sg) === key(slot));
+    if (!inv.answers && !suggested) continue;
+    const base = inv.answers || poll.slots.map(() => 0);
+    const next = map.map(oldIdx => (oldIdx >= 0 ? (base[oldIdx] || 0) : 0));
+    // Quem sugeriu o horário fica logo com Sim — foi ele que o propôs.
+    if (suggested) next[newIdx] = 1;
+    await store.setAnswers(inv.token, next);
+    if (suggested) await store.clearSuggestion(inv.token, slot);
+  }
+
+  if (poll.chosenSlot != null) {
+    const moved = map.indexOf(poll.chosenSlot);
+    if (moved >= 0 && moved !== poll.chosenSlot) await store.setClosed(poll.id, poll.closed, moved);
+  }
+
+  const msg = t(UI_LANG, "adopted", { s: fmtLong(poll.lang, slot, poll.duration) });
+  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
+});
+
 app.post("/admin/polls/:id/close", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.redirect("/admin");
@@ -346,7 +399,7 @@ app.get("/v/:token", async (req, res) => {
   if (poll.status === "draft") {
     return res.status(404).send(simplePage(poll.lang, t(poll.lang, "notOpenYet"), "info"));
   }
-  res.send(participantPage(poll.lang, poll, inv));
+  res.send(participantPage(poll.lang, poll, inv, { admin: isAdmin(req) }));
 });
 
 app.post("/v/:token", async (req, res) => {
@@ -361,8 +414,14 @@ app.post("/v/:token", async (req, res) => {
     const v = Number(raw[i]);
     return v === 1 || v === 2 ? v : 0;
   });
+  const note = String(req.body.note || "").slice(0, 600).trim();
+  const suggestions = (Array.isArray(req.body.suggestions) ? req.body.suggestions : [])
+    .filter(x => x && /^\d{4}-\d{2}-\d{2}$/.test(x.d) && /^\d{2}:\d{2}$/.test(x.h))
+    .map(x => ({ d: x.d, h: snap15(x.h) }))
+    .filter((x, i, arr) => arr.findIndex(y => y.d === x.d && y.h === x.h) === i)
+    .slice(0, 3);
 
-  await store.saveAnswers(inv.token, answers);
+  await store.saveAnswers(inv.token, answers, note, suggestions);
   const invitees = await store.getInvitees(poll.id);
   const fresh = invitees.find(i => i.token === inv.token) || { ...inv, answers };
   notifyOrganizer(poll, fresh, invitees, baseUrl(req)).catch(e => console.error("[notify]", e.message));

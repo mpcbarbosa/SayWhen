@@ -42,12 +42,16 @@ async function pgDriver() {
       name text not null,
       email text not null,
       answers jsonb,
+      note text,
+      suggestions jsonb,
       answered_at timestamptz,
       invited_at timestamptz
     );
     create index if not exists invitees_poll_idx on invitees(poll_id);
     alter table polls add column if not exists tz text not null default 'Europe/Lisbon';
     alter table polls add column if not exists status text not null default 'open';
+    alter table invitees add column if not exists note text;
+    alter table invitees add column if not exists suggestions jsonb;
   `);
 
   const rowToPoll = (r) => ({
@@ -58,7 +62,8 @@ async function pgDriver() {
   });
   const rowToInvitee = (r) => ({
     token: r.token, pollId: r.poll_id, name: r.name, email: r.email,
-    answers: r.answers, answeredAt: r.answered_at, invitedAt: r.invited_at
+    answers: r.answers, note: r.note || "", suggestions: r.suggestions || [],
+    answeredAt: r.answered_at, invitedAt: r.invited_at
   });
 
   return {
@@ -135,10 +140,17 @@ async function pgDriver() {
       const { rows } = await pool.query("select * from invitees where token=$1", [token]);
       return rows[0] ? rowToInvitee(rows[0]) : null;
     },
-    async saveAnswers(token, answers) {
+    async saveAnswers(token, answers, note = "", suggestions = []) {
       await pool.query(
-        "update invitees set answers=$2, answered_at=now() where token=$1",
-        [token, JSON.stringify(answers)]);
+        `update invitees set answers=$2, note=$3, suggestions=$4, answered_at=now()
+         where token=$1`,
+        [token, JSON.stringify(answers), note, JSON.stringify(suggestions)]);
+    },
+    async clearSuggestion(token, slot) {
+      const { rows } = await pool.query("select suggestions from invitees where token=$1", [token]);
+      const left = (rows[0]?.suggestions || []).filter(s => !(s.d === slot.d && s.h === slot.h));
+      await pool.query("update invitees set suggestions=$2 where token=$1",
+        [token, JSON.stringify(left)]);
     },
     // Reescreve respostas sem mexer na data em que foram dadas.
     async setAnswers(token, answers) {
@@ -189,7 +201,7 @@ async function fileDriver() {
       for (const i of invitees) {
         db.invitees[i.token] = {
           token: i.token, pollId: poll.id, name: i.name, email: i.email,
-          answers: null, answeredAt: null, invitedAt: null
+          answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
       await flush();
@@ -198,7 +210,7 @@ async function fileDriver() {
       for (const i of invitees) {
         db.invitees[i.token] = {
           token: i.token, pollId, name: i.name, email: i.email,
-          answers: null, answeredAt: null, invitedAt: null
+          answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
       await flush();
@@ -214,7 +226,7 @@ async function fileDriver() {
       for (const i of invitees) {
         db.invitees[i.token] = {
           token: i.token, pollId, name: i.name, email: i.email,
-          answers: null, answeredAt: null, invitedAt: null
+          answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
       await flush();
@@ -234,14 +246,26 @@ async function fileDriver() {
     async getInvitees(pollId) {
       return Object.values(db.invitees)
         .filter(i => i.pollId === pollId)
+        .map(i => ({ note: "", suggestions: [], ...i }))
         .sort((a, b) => a.name.localeCompare(b.name));
     },
-    async getInviteeByToken(token) { return db.invitees[token] || null; },
-    async saveAnswers(token, answers) {
+    async getInviteeByToken(token) {
+      const i = db.invitees[token];
+      return i ? { note: "", suggestions: [], ...i } : null;
+    },
+    async saveAnswers(token, answers, note = "", suggestions = []) {
       const i = db.invitees[token];
       if (!i) return;
       i.answers = answers;
+      i.note = note;
+      i.suggestions = suggestions;
       i.answeredAt = new Date().toISOString();
+      await flush();
+    },
+    async clearSuggestion(token, slot) {
+      const i = db.invitees[token];
+      if (!i) return;
+      i.suggestions = (i.suggestions || []).filter(s => !(s.d === slot.d && s.h === slot.h));
       await flush();
     },
     async setAnswers(token, answers) {

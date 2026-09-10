@@ -4,6 +4,20 @@ import {
   TIMEZONES, DEFAULT_TZ, tzLabel, slotStart
 } from "./util.js";
 
+// Horas em passos de 15 minutos, das 07:00 às 21:00.
+export const TIMES = (() => {
+  const out = [];
+  for (let h = 7; h <= 21; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      if (h === 21 && m > 0) break;
+      out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    }
+  }
+  return out;
+})();
+const timeOpts = (sel) =>
+  TIMES.map(v => `<option value="${v}"${v === sel ? " selected" : ""}>${v}</option>`).join("");
+
 export const CSS = `
 :root{
   color-scheme:light;
@@ -196,16 +210,7 @@ export function loginPage(lang, error) {
 function pollForm(lang, { action, poll, people, formId, primary, draft, showDraft = true }) {
   const today = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  // Horas em passos de 15 minutos — nada de :01, :06, :08.
-  const TIMES = [];
-  for (let h = 7; h <= 21; h++) {
-    for (const m of [0, 15, 30, 45]) {
-      if (h === 21 && m > 0) break;
-      TIMES.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-    }
-  }
-  const timeOptions = (sel) =>
-    TIMES.map(v => `<option value="${v}"${v === sel ? " selected" : ""}>${v}</option>`).join("");
+  const timeOptions = timeOpts;
 
   const slotRow = (d, h) => `
     <div class="slot-row">
@@ -413,7 +418,7 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
     <tr>
       <td class="who">
         <div>${esc(inv.name)}</div>
-        <div class="who-meta">${esc(inv.email)} —
+        <div class="who-meta">${(inv.note || "").trim() ? "✎ " : ""}${esc(inv.email)} —
           ${inv.answeredAt
             ? esc(t(lang, "answered")) + " " + esc(fmtDateTime(lang, inv.answeredAt))
             : esc(t(lang, "pending"))}
@@ -469,6 +474,21 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
 
   const allLinks = invitees.map(inv => `${inv.name} <${inv.email}>\n${baseUrl}/v/${inv.token}`).join("\n\n");
 
+  const withNotes = invitees.filter(i => (i.note || "").trim());
+
+  // Sugestões agrupadas por horário, com quem as propôs, tirando as que já existem.
+  const existing = new Set(poll.slots.map(s => `${s.d} ${s.h}`));
+  const sugMap = new Map();
+  for (const inv of invitees) {
+    for (const sg of inv.suggestions || []) {
+      const k = `${sg.d} ${sg.h}`;
+      if (existing.has(k)) continue;
+      if (!sugMap.has(k)) sugMap.set(k, { d: sg.d, h: sg.h, by: [] });
+      sugMap.get(k).by.push(inv.name);
+    }
+  }
+  const suggestions = [...sugMap.values()].sort((a, b) => (a.d + a.h < b.d + b.h ? -1 : 1));
+
   const body = `
   ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
   <div class="stack">
@@ -523,6 +543,39 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
     </section>
 
     <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "sugsTitle"))}</h2></div>
+      <div class="card-body">
+        ${suggestions.length ? `<div class="list">${suggestions.map(sg => `
+          <div class="list-item">
+            <div class="grow">
+              <b>${esc(fmtLong(pl, { d: sg.d, h: sg.h }, poll.duration))}</b>
+              <div class="hint">${esc(t(lang, "sugBy", { n: sg.by.join(", ") }))}</div>
+            </div>
+            <form method="post" action="/admin/polls/${esc(poll.id)}/adopt">
+              <input type="hidden" name="d" value="${esc(sg.d)}">
+              <input type="hidden" name="h" value="${esc(sg.h)}">
+              <button class="btn btn-sm btn-primary" type="submit">${esc(t(lang, "adoptBtn"))}</button>
+            </form>
+          </div>`).join("")}</div>`
+        : `<p class="hint">${esc(t(lang, "noSugs"))}</p>`}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "notesTitle"))}</h2></div>
+      <div class="card-body">
+        ${withNotes.length ? `<div class="list">${withNotes.map(inv => `
+          <div class="list-item">
+            <div class="grow">
+              <b>${esc(inv.name)}</b>
+              <div style="white-space:pre-wrap;margin-top:2px">${esc(inv.note)}</div>
+            </div>
+          </div>`).join("")}</div>`
+        : `<p class="hint">${esc(t(lang, "noNotes"))}</p>`}
+      </div>
+    </section>
+
+    <section class="card">
       <div class="card-head">
         <h2>${esc(t(lang, "fPeople"))}</h2>
         <span class="sub"><button class="btn btn-sm" type="button" id="allBtn">${esc(t(lang, "copyAll"))}</button></span>
@@ -571,8 +624,18 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
   return layout(lang, poll.title, body, { script, rightSlot: right });
 }
 
+function sugRow(lang, d, h) {
+  return `
+    <div class="slot-row sug-row">
+      <input type="date" name="sugDate" value="${esc(d)}">
+      <select name="sugTime">${timeOpts(h || "10:00")}</select>
+      <span class="hint"></span>
+      <button type="button" class="del" aria-label="${esc(t(lang, "sugRemove"))}">&times;</button>
+    </div>`;
+}
+
 /* ------------------------------------------------------- participant */
-export function participantPage(lang, poll, invitee) {
+export function participantPage(lang, poll, invitee, { admin = false } = {}) {
   const ordered = sortSlots(poll.slots);
   const answers = invitee.answers || poll.slots.map(() => 0);
   const tz = poll.tz || DEFAULT_TZ;
@@ -621,6 +684,20 @@ export function participantPage(lang, poll, invitee) {
       <button class="btn btn-text btn-sm" type="button" id="allYes">${esc(t(lang, "allYes"))}</button>
       <button class="btn btn-text btn-sm" type="button" id="allNo">${esc(t(lang, "allNo"))}</button>
     </div>
+
+    <div class="card"><div class="card-body">
+      <h3>${esc(t(lang, "sugTitle"))}</h3>
+      <p class="hint">${esc(t(lang, "sugHint"))}</p>
+      <div class="stack" id="sugs" style="gap:8px">
+        ${(invitee.suggestions || []).map(sg => sugRow(lang, sg.d, sg.h)).join("") || sugRow(lang, "", "10:00")}
+      </div>
+      <div><button class="btn btn-sm" type="button" id="addSug">+ ${esc(t(lang, "sugAdd"))}</button></div>
+    </div></div>
+
+    <label class="field">${esc(t(lang, "noteLabel"))}
+      <textarea name="note" id="note" rows="3" maxlength="600"
+        placeholder="${esc(t(lang, "notePh"))}">${esc(invitee.note || "")}</textarea>
+    </label>
 
     <div id="okBox" class="notice ok" hidden></div>
 
@@ -717,6 +794,33 @@ export function participantPage(lang, poll, invitee) {
   });
   document.getElementById('allYes').addEventListener('click',function(){ answers=answers.map(function(){return 1}); mark(); });
   document.getElementById('allNo').addEventListener('click',function(){ answers=answers.map(function(){return 2}); mark(); });
+  document.getElementById('note').addEventListener('input', mark);
+
+  function bindSug(row){
+    row.querySelector('.del').addEventListener('click', function(){
+      if (document.querySelectorAll('#sugs .sug-row').length > 1) row.remove();
+      else { row.querySelector('input[name=sugDate]').value = ''; }
+      mark();
+    });
+    row.querySelectorAll('input,select').forEach(function(el){ el.addEventListener('change', mark); });
+  }
+  document.querySelectorAll('#sugs .sug-row').forEach(bindSug);
+  document.getElementById('addSug').addEventListener('click', function(){
+    var box = document.getElementById('sugs');
+    if (box.children.length >= 3) return;
+    var row = box.lastElementChild.cloneNode(true);
+    row.querySelector('input[name=sugDate]').value = '';
+    box.appendChild(row); bindSug(row);
+  });
+  function collectSugs(){
+    var out = [];
+    document.querySelectorAll('#sugs .sug-row').forEach(function(r){
+      var d = r.querySelector('input[name=sugDate]').value;
+      var h = r.querySelector('select[name=sugTime]').value;
+      if (d) out.push({ d: d, h: h });
+    });
+    return out.slice(0, 3);
+  }
 
   window.addEventListener('beforeunload', function(e){
     if (!dirty) return;
@@ -726,7 +830,11 @@ export function participantPage(lang, poll, invitee) {
   document.getElementById('saveBtn').addEventListener('click', function(){
     var btn=this; btn.disabled=true; btn.textContent=STR.saving;
     fetch(location.pathname, {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({answers: answers})})
+      body: JSON.stringify({
+        answers: answers,
+        note: document.getElementById('note').value,
+        suggestions: collectSugs()
+      })})
       .then(function(r){ if(!r.ok) throw new Error('bad'); return r.json(); })
       .then(function(){
         var ok=document.getElementById('okBox');
@@ -739,7 +847,10 @@ export function participantPage(lang, poll, invitee) {
   });
   paint();`);
 
-  return layout(lang, poll.title, body, { script });
+  const right = admin
+    ? `<a class="btn btn-text btn-sm" href="/admin/polls/${esc(poll.id)}">&larr; ${esc(t(lang, "backToAdmin"))}</a>`
+    : "";
+  return layout(lang, poll.title, body, { script, rightSlot: right });
 }
 
 /* ------------------------------------------------------------ simple */
