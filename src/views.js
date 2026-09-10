@@ -483,6 +483,7 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
       <div class="card-head">
         <h2>${esc(poll.title)}</h2>
         <span class="sub">${poll.duration} min${poll.place ? " · " + esc(poll.place) : ""} · ${esc(t(lang, "tzAdmin", { tz: tzLabel(poll.tz || DEFAULT_TZ) }))}${poll.closed ? " · " + esc(t(lang, "closed")) : ""}</span>
+        <a class="btn btn-sm" href="/admin/polls/${esc(poll.id)}" id="refreshBtn">&#8635; ${esc(t(lang, "refresh"))}</a>
       </div>
       <div class="card-body">
         ${verdict}
