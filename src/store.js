@@ -41,6 +41,7 @@ async function pgDriver() {
       poll_id text not null references polls(id) on delete cascade,
       name text not null,
       email text not null,
+      lang text,
       answers jsonb,
       note text,
       suggestions jsonb,
@@ -52,6 +53,7 @@ async function pgDriver() {
     alter table polls add column if not exists status text not null default 'open';
     alter table invitees add column if not exists note text;
     alter table invitees add column if not exists suggestions jsonb;
+    alter table invitees add column if not exists lang text;
   `);
 
   const rowToPoll = (r) => ({
@@ -61,7 +63,7 @@ async function pgDriver() {
     status: r.status || "open"
   });
   const rowToInvitee = (r) => ({
-    token: r.token, pollId: r.poll_id, name: r.name, email: r.email,
+    token: r.token, pollId: r.poll_id, name: r.name, email: r.email, lang: r.lang || null,
     answers: r.answers, note: r.note || "", suggestions: r.suggestions || [],
     answeredAt: r.answered_at, invitedAt: r.invited_at
   });
@@ -80,8 +82,8 @@ async function pgDriver() {
         );
         for (const i of invitees) {
           await c.query(
-            `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)`,
-            [i.token, poll.id, i.name, i.email]
+            `insert into invitees (token,poll_id,name,email,lang) values ($1,$2,$3,$4,$5)`,
+            [i.token, poll.id, i.name, i.email, i.lang || null]
           );
         }
         await c.query("commit");
@@ -95,9 +97,9 @@ async function pgDriver() {
     async addInvitees(pollId, invitees) {
       for (const i of invitees) {
         await pool.query(
-          `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)
+          `insert into invitees (token,poll_id,name,email,lang) values ($1,$2,$3,$4,$5)
            on conflict (token) do nothing`,
-          [i.token, pollId, i.name, i.email]
+          [i.token, pollId, i.name, i.email, i.lang || null]
         );
       }
     },
@@ -114,8 +116,8 @@ async function pgDriver() {
       await pool.query("delete from invitees where poll_id=$1", [pollId]);
       for (const i of invitees) {
         await pool.query(
-          `insert into invitees (token,poll_id,name,email) values ($1,$2,$3,$4)`,
-          [i.token, pollId, i.name, i.email]
+          `insert into invitees (token,poll_id,name,email,lang) values ($1,$2,$3,$4,$5)`,
+          [i.token, pollId, i.name, i.email, i.lang || null]
         );
       }
     },
@@ -200,7 +202,7 @@ async function fileDriver() {
         createdAt: new Date().toISOString(), closed: false, chosenSlot: null };
       for (const i of invitees) {
         db.invitees[i.token] = {
-          token: i.token, pollId: poll.id, name: i.name, email: i.email,
+          token: i.token, pollId: poll.id, name: i.name, email: i.email, lang: i.lang || null,
           answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
@@ -209,7 +211,7 @@ async function fileDriver() {
     async addInvitees(pollId, invitees) {
       for (const i of invitees) {
         db.invitees[i.token] = {
-          token: i.token, pollId, name: i.name, email: i.email,
+          token: i.token, pollId, name: i.name, email: i.email, lang: i.lang || null,
           answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
@@ -225,7 +227,7 @@ async function fileDriver() {
       for (const [tk, i] of Object.entries(db.invitees)) if (i.pollId === pollId) delete db.invitees[tk];
       for (const i of invitees) {
         db.invitees[i.token] = {
-          token: i.token, pollId, name: i.name, email: i.email,
+          token: i.token, pollId, name: i.name, email: i.email, lang: i.lang || null,
           answers: null, note: "", suggestions: [], answeredAt: null, invitedAt: null
         };
       }
@@ -246,12 +248,12 @@ async function fileDriver() {
     async getInvitees(pollId) {
       return Object.values(db.invitees)
         .filter(i => i.pollId === pollId)
-        .map(i => ({ note: "", suggestions: [], ...i }))
+        .map(i => ({ note: "", suggestions: [], lang: null, ...i }))
         .sort((a, b) => a.name.localeCompare(b.name));
     },
     async getInviteeByToken(token) {
       const i = db.invitees[token];
-      return i ? { note: "", suggestions: [], ...i } : null;
+      return i ? { note: "", suggestions: [], lang: null, ...i } : null;
     },
     async saveAnswers(token, answers, note = "", suggestions = []) {
       const i = db.invitees[token];

@@ -45,6 +45,7 @@ a{color:var(--accent)}
 .brand{font-size:17px}
 .brand small{display:block;font-size:12px;color:var(--muted)}
 .spacer{flex:1}
+select.lang{width:auto;min-width:110px;padding:6px 8px}
 button,select,input,textarea{font:inherit}
 .btn{border:1px solid var(--line);background:var(--surface);color:var(--accent);
   padding:8px 16px;border-radius:4px;font-weight:500;cursor:pointer;
@@ -228,7 +229,7 @@ function pollForm(lang, { action, poll, people, formId, primary, draft, showDraf
   const dur = poll ? String(poll.duration) : "60";
   const plang = poll && poll.lang ? poll.lang : lang;
   const ptz = poll && poll.tz ? poll.tz : DEFAULT_TZ;
-  const peopleText = (people || []).map(i => `${i.name} ${i.email}`).join("\n");
+  const peopleText = (people || []).map(i => `${i.name} ${i.email}${i.lang ? " " + i.lang : ""}`).join("\n");
 
   return `
       <form class="card-body" method="post" action="${action}" id="${formId}">
@@ -847,9 +848,13 @@ export function participantPage(lang, poll, invitee, { admin = false } = {}) {
   });
   paint();`);
 
-  const right = admin
+  const langPicker = `
+    <select class="lang" aria-label="Idioma" onchange="location.search='?lang='+this.value">
+      ${LANGS.map(l => `<option value="${l}"${l === lang ? " selected" : ""}>${esc(L(l).name)}</option>`).join("")}
+    </select>`;
+  const right = (admin
     ? `<a class="btn btn-text btn-sm" href="/admin/polls/${esc(poll.id)}">&larr; ${esc(t(lang, "backToAdmin"))}</a>`
-    : "";
+    : "") + langPicker;
   return layout(lang, poll.title, body, { script, rightSlot: right });
 }
 

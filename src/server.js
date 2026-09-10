@@ -4,7 +4,7 @@ import { sendMail, mailEnabled } from "./mail.js";
 import { t } from "./i18n.js";
 import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
-  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel, snap15
+  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel, snap15, pickLang
 } from "./util.js";
 import { loginPage, adminHome, adminDraft, adminEdit, adminPoll, participantPage, simplePage } from "./views.js";
 import { buildIcs } from "./ics.js";
@@ -52,19 +52,20 @@ function slotLines(lang, poll) {
 }
 
 async function sendInvites(poll, invitees, base) {
-  const lang = poll.lang;
-  const opts = slotLines(lang, poll);
   const place = poll.place ? `, ${poll.place}` : "";
-  const tzNote = `\n\n${t(lang, "tzNote", { tz: tzLabel(poll.tz || DEFAULT_TZ) })}`;
   const sent = [];
   for (const inv of invitees) {
+    // O email vai na língua da sondagem; a página abre na língua do browser.
+    const lang = inv.lang || poll.lang;
+    const opts = slotLines(lang, poll) +
+      `\n\n${t(lang, "tzNote", { tz: tzLabel(poll.tz || DEFAULT_TZ) })}`;
     const r = await sendMail({
       to: inv.email,
       replyTo: poll.organizerEmail,
       subject: t(lang, "inviteSubject", { t: poll.title }),
       text: t(lang, "inviteBody", {
         n: inv.name, t: poll.title, link: `${base}/v/${inv.token}`,
-        d: poll.duration, p: place, opts: opts + tzNote, o: poll.organizerName || ""
+        d: poll.duration, p: place, opts, o: poll.organizerName || ""
       })
     });
     if (r.ok) sent.push(inv.token);
@@ -396,10 +397,14 @@ app.get("/v/:token", async (req, res) => {
   if (!inv) return res.status(404).send(simplePage(UI_LANG, t(UI_LANG, "badToken")));
   const poll = await store.getPoll(inv.pollId);
   if (!poll) return res.status(404).send(simplePage(UI_LANG, t(UI_LANG, "badToken")));
+  // Escolha na própria página > língua do browser > língua da sondagem.
+  const lang = ["pt", "es", "en"].includes(req.query.lang)
+    ? req.query.lang
+    : (inv.lang || pickLang(req.headers["accept-language"], poll.lang));
   if (poll.status === "draft") {
-    return res.status(404).send(simplePage(poll.lang, t(poll.lang, "notOpenYet"), "info"));
+    return res.status(404).send(simplePage(lang, t(lang, "notOpenYet"), "info"));
   }
-  res.send(participantPage(poll.lang, poll, inv, { admin: isAdmin(req) }));
+  res.send(participantPage(lang, poll, inv, { admin: isAdmin(req) }));
 });
 
 app.post("/v/:token", async (req, res) => {

@@ -84,6 +84,28 @@ export function slotStart(slot, tz) {
   return zonedToUtc(y, mo, d, h, mi, tz || DEFAULT_TZ);
 }
 
+/**
+ * Escolhe a língua a partir do cabeçalho Accept-Language do browser.
+ * "pt-BR,pt;q=0.9,en;q=0.8" -> pt. Sem correspondência, devolve o fallback.
+ */
+export function pickLang(header, fallback = "pt", allowed = ["pt", "es", "en"]) {
+  const ranked = String(header || "")
+    .split(",")
+    .map(part => {
+      const [tag, ...params] = part.trim().split(";");
+      const q = params.find(x => x.trim().startsWith("q="));
+      return { tag: tag.trim().toLowerCase(), q: q ? parseFloat(q.split("=")[1]) || 0 : 1 };
+    })
+    .filter(x => x.tag)
+    .sort((a, b) => b.q - a.q);
+
+  for (const { tag } of ranked) {
+    const base = tag.split("-")[0];
+    if (allowed.includes(base)) return base;
+  }
+  return fallback;
+}
+
 export function sortSlots(slots) {
   return slots
     .map((s, i) => ({ s, i }))
@@ -120,7 +142,13 @@ export function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-export function parsePeople(raw) {
+/**
+ * Lê a lista de convidados. Uma pessoa por linha:
+ *   Ana Ribeiro ana@cliente.pt
+ *   Carlos Ruiz carlos@cliente.es es      <- idioma opcional depois do email
+ * O idioma só é aceite se vier depois do email, para não confundir com nomes.
+ */
+export function parsePeople(raw, allowed = ["pt", "es", "en"]) {
   const out = [];
   const seen = new Set();
   for (const line of String(raw || "").split(/[\n;]+/)) {
@@ -128,12 +156,17 @@ export function parsePeople(raw) {
     if (!s) continue;
     const m = s.match(/([^\s<,;]+@[^\s>,;]+)/);
     if (!m) continue;
+
     const email = m[1].toLowerCase().replace(/[.,;>]+$/, "");
     if (seen.has(email)) continue;
     seen.add(email);
-    let name = s.replace(m[0], "").replace(/[<>,;"]/g, "").trim();
+
+    const after = s.slice(m.index + m[0].length).replace(/[<>,;"]/g, "").trim().toLowerCase();
+    const lang = allowed.includes(after) ? after : null;
+
+    let name = s.slice(0, m.index).replace(/[<>,;"]/g, "").trim();
     if (!name) name = email.split("@")[0].replace(/[._-]+/g, " ");
-    out.push({ name, email });
+    out.push(lang ? { name, email, lang } : { name, email });
   }
   return out;
 }
