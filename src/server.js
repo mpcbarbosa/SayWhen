@@ -6,7 +6,7 @@ import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
   sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel
 } from "./util.js";
-import { loginPage, adminHome, adminDraft, adminPoll, participantPage, simplePage } from "./views.js";
+import { loginPage, adminHome, adminDraft, adminEdit, adminPoll, participantPage, simplePage } from "./views.js";
 import { buildIcs } from "./ics.js";
 
 const PORT = process.env.PORT || 3000;
@@ -163,11 +163,18 @@ app.post("/admin/polls", requireAdmin, async (req, res) => {
   res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
 });
 
-// Guardar ou publicar um rascunho.
+app.get("/admin/polls/:id/edit", requireAdmin, async (req, res) => {
+  const poll = await store.getPoll(req.params.id);
+  if (!poll) return res.redirect("/admin");
+  const invitees = await store.getInvitees(poll.id);
+  if (poll.status === "draft") return res.redirect(`/admin/polls/${poll.id}`);
+  res.send(adminEdit(UI_LANG, poll, invitees, req.query.ok || ""));
+});
+
+// Guardar ou publicar um rascunho, ou editar uma sondagem já publicada.
 app.post("/admin/polls/:id/update", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.redirect("/admin");
-  if (poll.status !== "draft") return res.redirect(`/admin/polls/${poll.id}`);
 
   const b = req.body;
   const publish = b.action === "publish";
@@ -178,19 +185,74 @@ app.post("/admin/polls/:id/update", requireAdmin, async (req, res) => {
     return res.status(400).send(simplePage(UI_LANG, t(UI_LANG, "draftIncomplete")));
   }
 
-  await store.updatePoll(poll.id, { ...fields, status: publish ? "open" : "draft" });
-  const invitees = people.map(p => ({ ...p, token: makeToken() }));
-  await store.replaceInvitees(poll.id, invitees);
-
-  if (!publish) {
-    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
+  /* ---- rascunho: nada a preservar, escreve-se por cima ---- */
+  if (poll.status === "draft") {
+    await store.updatePoll(poll.id, { ...fields, status: publish ? "open" : "draft" });
+    const invitees = people.map(p => ({ ...p, token: makeToken() }));
+    await store.replaceInvitees(poll.id, invitees);
+    if (!publish) {
+      return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
+    }
+    const full = { ...poll, ...fields, status: "open" };
+    const n = await sendInvites(full, invitees, baseUrl(req));
+    const msg = mailEnabled()
+      ? `${n}/${invitees.length} convites enviados.`
+      : `Sondagem publicada. Envio de email desligado — usa "Convidar pelo meu email" na lista.`;
+    return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
   }
-  const full = { ...poll, ...fields, status: "open" };
-  const n = await sendInvites(full, invitees, baseUrl(req));
-  const msg = mailEnabled()
-    ? `${n}/${invitees.length} convites enviados.`
-    : `Sondagem publicada. Envio de email desligado — usa "Convidar pelo meu email" na lista.`;
-  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(msg)}`);
+
+  /* ---- sondagem publicada: preservar respostas ---- */
+  const existing = await store.getInvitees(poll.id);
+  const key = (s) => `${s.d} ${s.h}`;
+  const oldKeys = poll.slots.map(key);
+  const newKeys = fields.slots.map(key);
+  // Para cada horário novo, onde estava antes (ou -1 se é novo).
+  const map = newKeys.map(k => oldKeys.indexOf(k));
+  const slotsChanged = oldKeys.join("|") !== newKeys.join("|");
+
+  await store.updatePoll(poll.id, { ...fields, status: "open" });
+
+  // Pessoas: manter quem fica (com respostas e link), acrescentar novas, remover as que saíram.
+  const wanted = new Map(people.map(p => [p.email, p]));
+  const removed = existing.filter(i => !wanted.has(i.email.toLowerCase()));
+  const kept = existing.filter(i => wanted.has(i.email.toLowerCase()));
+  const fresh = people.filter(p => !existing.some(i => i.email.toLowerCase() === p.email));
+
+  if (removed.length) await store.removeInvitees(removed.map(i => i.token));
+  const added = fresh.map(p => ({ ...p, token: makeToken() }));
+  if (added.length) await store.addInvitees(poll.id, added);
+
+  // Remapear as respostas de quem fica.
+  let affected = 0;
+  if (slotsChanged) {
+    for (const inv of kept) {
+      if (!inv.answers) continue;
+      const next = map.map(oldIdx => (oldIdx >= 0 ? (inv.answers[oldIdx] || 0) : 0));
+      const lost = inv.answers.some((v, i) => v > 0 && !map.includes(i));
+      const gained = next.some((v, i) => v === 0 && map[i] < 0);
+      if (lost || gained) affected++;
+      await store.setAnswers(inv.token, next);
+    }
+  }
+
+  // O horário escolhido pode ter desaparecido.
+  let chosenGone = false;
+  if (poll.chosenSlot != null) {
+    const newIdx = map.indexOf(poll.chosenSlot);
+    if (newIdx < 0) { chosenGone = true; await store.setClosed(poll.id, false, null); }
+    else if (newIdx !== poll.chosenSlot) await store.setClosed(poll.id, poll.closed, newIdx);
+  }
+
+  const parts = [t(UI_LANG, "editSaved")];
+  if (added.length) parts.push(t(UI_LANG, "addedN", { n: added.length }));
+  if (removed.length) parts.push(t(UI_LANG, "editRemoved", { n: removed.length }));
+  if (affected) parts.push(t(UI_LANG, "editAffected", { n: affected }));
+  if (chosenGone) parts.push(t(UI_LANG, "editChosenGone"));
+  if (added.length && mailEnabled()) {
+    const full = { ...poll, ...fields };
+    await sendInvites(full, added, baseUrl(req));
+  }
+  res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(parts.join(" "))}`);
 });
 
 app.get("/admin/polls/:id", requireAdmin, async (req, res) => {

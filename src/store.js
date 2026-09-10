@@ -140,6 +140,15 @@ async function pgDriver() {
         "update invitees set answers=$2, answered_at=now() where token=$1",
         [token, JSON.stringify(answers)]);
     },
+    // Reescreve respostas sem mexer na data em que foram dadas.
+    async setAnswers(token, answers) {
+      await pool.query("update invitees set answers=$2 where token=$1",
+        [token, JSON.stringify(answers)]);
+    },
+    async removeInvitees(tokens) {
+      if (!tokens.length) return;
+      await pool.query("delete from invitees where token = any($1)", [tokens]);
+    },
     async markInvited(tokens) {
       if (!tokens.length) return;
       await pool.query("update invitees set invited_at=now() where token = any($1)", [tokens]);
@@ -233,6 +242,16 @@ async function fileDriver() {
       if (!i) return;
       i.answers = answers;
       i.answeredAt = new Date().toISOString();
+      await flush();
+    },
+    async setAnswers(token, answers) {
+      const i = db.invitees[token];
+      if (!i) return;
+      i.answers = answers;
+      await flush();
+    },
+    async removeInvitees(tokens) {
+      for (const tk of tokens) delete db.invitees[tk];
       await flush();
     },
     async markInvited(tokens) {

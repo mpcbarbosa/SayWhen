@@ -193,7 +193,7 @@ export function loginPage(lang, error) {
 /* -------------------------------------------------------- admin home */
 /* ---------------------------------------------- formulário partilhado */
 // Usado para criar uma sondagem nova e para editar um rascunho.
-function pollForm(lang, { action, poll, people, formId, primary, draft }) {
+function pollForm(lang, { action, poll, people, formId, primary, draft, showDraft = true }) {
   const today = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   // Horas em passos de 15 minutos — nada de :01, :06, :08.
@@ -278,7 +278,7 @@ function pollForm(lang, { action, poll, people, formId, primary, draft }) {
         </label>
         <div class="row">
           <button class="btn btn-primary" type="submit" name="action" value="publish" id="createBtn">${esc(primary)}</button>
-          <button class="btn" type="submit" name="action" value="draft" formnovalidate>${esc(t(lang, "saveDraft"))}</button>
+          ${showDraft ? `<button class="btn" type="submit" name="action" value="draft" formnovalidate>${esc(t(lang, "saveDraft"))}</button>` : ""}
         </div>
       </form>`;
 }
@@ -368,6 +368,28 @@ export function adminDraft(lang, poll, people, flash) {
   return layout(lang, poll.title || t(lang, "untitled"), body, { script: FORM_SCRIPT(lang, "draftForm"), rightSlot: right });
 }
 
+/* -------------------------------------------------------- admin edit */
+export function adminEdit(lang, poll, people, flash) {
+  const body = `
+  ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
+  <div class="stack">
+    <div class="row">
+      <a class="btn btn-text btn-sm" href="/admin/polls/${esc(poll.id)}">&larr; ${esc(t(lang, "back"))}</a>
+    </div>
+    <div class="notice info">${esc(t(lang, "editNotice"))}</div>
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "editPoll"))}</h2></div>
+      ${pollForm(lang, {
+        action: `/admin/polls/${esc(poll.id)}/update`, poll, people,
+        formId: "editForm", primary: t(lang, "saveChanges"), draft: false, showDraft: false
+      })}
+    </section>
+  </div>`;
+
+  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  return layout(lang, poll.title || t(lang, "untitled"), body, { script: FORM_SCRIPT(lang, "editForm"), rightSlot: right });
+}
+
 /* -------------------------------------------------------- admin poll */
 export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
   const pl = poll.lang || lang;
@@ -452,6 +474,7 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
   <div class="stack">
     <div class="row">
       <a class="btn btn-text btn-sm" href="/admin">&larr; ${esc(t(lang, "back"))}</a>
+      <a class="btn btn-sm" href="/admin/polls/${esc(poll.id)}/edit">${esc(t(lang, "editPoll"))}</a>
       <div class="spacer"></div>
       <span class="hint">${esc(t(lang, "answeredOf", { a: answered, t: invitees.length }))}</span>
     </div>
