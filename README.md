@@ -34,7 +34,7 @@ e os links pessoais podem ser copiados um a um na página da sondagem.
    | `ADMIN_KEY` | uma chave longa à tua escolha (é a password da área do organizador) |
    | `PUBLIC_URL` | o endereço do serviço, ex. `https://saywhen.onrender.com` |
    | `RESEND_API_KEY` | chave criada em resend.com → API Keys |
-   | `MAIL_FROM` | `SayWhen <sondagens@teu-dominio-verificado>` |
+   | `MAIL_FROM` | `SayWhen <sondagens@mail.miguelbarbosapro.com>` (domínio verificado no Resend) |
    | `DATABASE_URL` | ligação Postgres (ver abaixo) |
    | `UI_LANG` | `pt` |
 

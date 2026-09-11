@@ -18,7 +18,7 @@ services:
         sync: false
       # Remetente. Tem de ser um domínio verificado no Resend.
       - key: MAIL_FROM
-        value: SayWhen <sondagens@mail.e-news.app>
+        value: SayWhen <sondagens@mail.miguelbarbosapro.com>
       # Endereço público do serviço, usado nos links dos convites.
       # Ex.: https://saywhen.onrender.com
       - key: PUBLIC_URL
