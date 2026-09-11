@@ -59,12 +59,14 @@ async function sendInvites(poll, invitees, base) {
     const lang = inv.lang || poll.lang;
     const opts = slotLines(lang, poll) +
       `\n\n${t(lang, "tzNote", { tz: tzLabel(poll.tz || DEFAULT_TZ) })}`;
+    const link = `${base}/v/${inv.token}`;
     const r = await sendMail({
       to: inv.email,
       replyTo: poll.organizerEmail,
+      cta: { url: link, label: t(lang, "ctaLabel") },
       subject: t(lang, "inviteSubject", { t: poll.title }),
       text: t(lang, "inviteBody", {
-        n: inv.name, t: poll.title, link: `${base}/v/${inv.token}`,
+        n: inv.name, t: poll.title, link,
         d: poll.duration, p: place, opts, o: poll.organizerName || ""
       })
     });

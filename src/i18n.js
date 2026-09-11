@@ -91,6 +91,7 @@ const pt = {
   legendYes: "Sim", legendNo: "Não", legendNone: "Sem resposta",
 
   // emails
+  ctaLabel: "Indicar disponibilidade",
   inviteSubject: "Disponibilidade — {t}",
   inviteBody: [
     "Olá {n},",
@@ -209,6 +210,7 @@ const es = {
   reopen: "Reabrir", deletePoll: "Borrar encuesta", confirmDelete: "¿Borrar esta encuesta y todas las respuestas?",
   back: "Volver", logout: "Salir", backToAdmin: "Panel de la encuesta",
   legendYes: "Sí", legendNo: "No", legendNone: "Sin respuesta",
+  ctaLabel: "Indicar disponibilidad",
   inviteSubject: "Disponibilidad — {t}",
   inviteBody: [
     "Hola {n},",
@@ -327,6 +329,7 @@ const en = {
   reopen: "Reopen", deletePoll: "Delete poll", confirmDelete: "Delete this poll and every answer?",
   back: "Back", logout: "Sign out", backToAdmin: "Poll dashboard",
   legendYes: "Yes", legendNo: "No", legendNone: "No reply",
+  ctaLabel: "Mark your availability",
   inviteSubject: "Availability — {t}",
   inviteBody: [
     "Hi {n},",
