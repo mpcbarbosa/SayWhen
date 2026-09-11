@@ -78,11 +78,26 @@ incluídos — dá para testar o circuito todo sem enviar nada.
 Melhor horário = o que reúne mais "sim"; desempate por menos "não" e depois
 pelo mais cedo.
 
+## Contactos e grupos
+
+`GET /admin/contacts` é a agenda. Não é preciso alimentá-la: cada sondagem que
+crias ou editas guarda lá os convidados. Depois, no formulário da sondagem,
+marcas as pessoas em vez de escrever os nomes todos — e um grupo entra inteiro
+de uma vez.
+
+A mesma pessoa nunca fica com duas fichas por ter dois endereços. Quando um
+email novo tem o mesmo prefixo e o mesmo nome de alguém que já lá está
+(`mbarbosa@seidor.es` e `mbarbosa@seidor.com`), junta-se à ficha existente como
+endereço alternativo. Quando só o prefixo bate certo, ou só o nome, a app
+propõe a junção mas não decide sozinha — enganar-se aqui era mandar o convite à
+pessoa errada. Caixas partilhadas (`geral@`, `info@`) ficam sempre separadas.
+
 ## Estrutura
 
 ```
 src/server.js   rotas e regras
 src/store.js    dados (Postgres ou ficheiro JSON)
+src/contacts.js agenda: guardar convidados sem duplicar pessoas
 src/mail.js     envio via API do Resend
 src/views.js    páginas e CSS
 src/i18n.js     textos PT / ES / EN
