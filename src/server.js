@@ -4,9 +4,14 @@ import { sendMail, mailEnabled } from "./mail.js";
 import { t } from "./i18n.js";
 import {
   token as makeToken, id as makeId, fmtLong, fmtDay, parsePeople, parseSlots,
-  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel, snap15, pickLang
+  sortSlots, tallies, bestIndex, TIMEZONES, DEFAULT_TZ, tzLabel, snap15, pickLang,
+  emailKey
 } from "./util.js";
-import { loginPage, adminHome, adminDraft, adminEdit, adminPoll, participantPage, simplePage } from "./views.js";
+import {
+  loginPage, adminHome, adminDraft, adminEdit, adminPoll, adminContacts,
+  participantPage, simplePage
+} from "./views.js";
+import { rememberPeople, dupPairs, mergeContacts } from "./contacts.js";
 import { buildIcs } from "./ics.js";
 
 const PORT = process.env.PORT || 3000;
@@ -146,9 +151,20 @@ app.get("/admin/logout", (req, res) => {
   res.redirect("/admin");
 });
 
+// A agenda cresce sozinha, mas nunca à custa da sondagem: se falhar, avisa e segue.
+const remember = (people) =>
+  rememberPeople(store, people).catch(e => { console.error("[contacts]", e.message); return null; });
+
+// Contactos e grupos, para o seletor de pessoas.
+async function book() {
+  const [contacts, groups] = await Promise.all([store.listContacts(), store.listGroups()]);
+  return { contacts, groups };
+}
+
 app.get("/admin", requireAdmin, async (req, res) => {
   const polls = await store.listPolls();
-  res.send(adminHome(UI_LANG, polls, req.query.ok || ""));
+  const { contacts, groups } = await book();
+  res.send(adminHome(UI_LANG, polls, req.query.ok || "", contacts, groups));
 });
 
 app.post("/admin/polls", requireAdmin, async (req, res) => {
@@ -162,6 +178,7 @@ app.post("/admin/polls", requireAdmin, async (req, res) => {
   const people = withOrganizer(parsePeople(b.people), poll, Boolean(b.selfJoin));
   const invitees = people.map(p => ({ ...p, token: makeToken() }));
   await store.createPoll(poll, invitees);
+  await remember(people);
 
   if (draft) {
     return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
@@ -178,7 +195,8 @@ app.get("/admin/polls/:id/edit", requireAdmin, async (req, res) => {
   if (!poll) return res.redirect("/admin");
   const invitees = await store.getInvitees(poll.id);
   if (poll.status === "draft") return res.redirect(`/admin/polls/${poll.id}`);
-  res.send(adminEdit(UI_LANG, poll, invitees, req.query.ok || ""));
+  const { contacts, groups } = await book();
+  res.send(adminEdit(UI_LANG, poll, invitees, req.query.ok || "", contacts, groups));
 });
 
 // Guardar ou publicar um rascunho, ou editar uma sondagem já publicada.
@@ -200,6 +218,7 @@ app.post("/admin/polls/:id/update", requireAdmin, async (req, res) => {
     await store.updatePoll(poll.id, { ...fields, status: publish ? "open" : "draft" });
     const invitees = people.map(p => ({ ...p, token: makeToken() }));
     await store.replaceInvitees(poll.id, invitees);
+    await remember(people);
     if (!publish) {
       return res.redirect(`/admin/polls/${poll.id}?ok=${encodeURIComponent(t(UI_LANG, "draftSaved"))}`);
     }
@@ -231,6 +250,7 @@ app.post("/admin/polls/:id/update", requireAdmin, async (req, res) => {
   if (removed.length) await store.removeInvitees(removed.map(i => i.token));
   const added = fresh.map(p => ({ ...p, token: makeToken() }));
   if (added.length) await store.addInvitees(poll.id, added);
+  await remember(people);
 
   // Remapear as respostas de quem fica.
   let affected = 0;
@@ -269,10 +289,12 @@ app.get("/admin/polls/:id", requireAdmin, async (req, res) => {
   const poll = await store.getPoll(req.params.id);
   if (!poll) return res.status(404).send(simplePage(UI_LANG, "Sondagem não encontrada."));
   const invitees = await store.getInvitees(poll.id);
+  const { contacts, groups } = await book();
   if (poll.status === "draft") {
-    return res.send(adminDraft(UI_LANG, poll, invitees, req.query.ok || ""));
+    return res.send(adminDraft(UI_LANG, poll, invitees, req.query.ok || "", contacts, groups));
   }
-  res.send(adminPoll(UI_LANG, poll, invitees, baseUrl(req), req.query.ok || "", mailEnabled()));
+  res.send(adminPoll(UI_LANG, poll, invitees, baseUrl(req), req.query.ok || "",
+    mailEnabled(), contacts, groups));
 });
 
 app.post("/admin/polls/:id/remind", requireAdmin, async (req, res) => {
@@ -295,6 +317,7 @@ app.post("/admin/polls/:id/people", requireAdmin, async (req, res) => {
   }
   const invitees = fresh.map(p => ({ ...p, token: makeToken() }));
   await store.addInvitees(poll.id, invitees);
+  await remember(fresh);
   let msg = t(UI_LANG, "addedN", { n: invitees.length });
   if (mailEnabled()) {
     const n = await sendInvites(poll, invitees, baseUrl(req));
@@ -391,6 +414,98 @@ app.get("/admin/polls/:id/ics", requireAdmin, async (req, res) => {
 app.post("/admin/polls/:id/delete", requireAdmin, async (req, res) => {
   await store.deletePoll(req.params.id);
   res.redirect("/admin");
+});
+
+/* ----------------------------------------------------------- agenda */
+const redirectContacts = (res, key) =>
+  res.redirect(`/admin/contacts?ok=${encodeURIComponent(t(UI_LANG, key))}`);
+
+app.get("/admin/contacts", requireAdmin, async (req, res) => {
+  const { contacts, groups } = await book();
+  const distinct = await store.listDistinct();
+  res.send(adminContacts(UI_LANG, contacts, groups, dupPairs(contacts, distinct), req.query.ok || ""));
+});
+
+app.post("/admin/contacts", requireAdmin, async (req, res) => {
+  const name = String(req.body.name || "").trim().slice(0, 120);
+  const email = emailKey(req.body.email).slice(0, 200);
+  if (!name || !email.includes("@")) return res.redirect("/admin/contacts");
+  const contacts = await store.listContacts();
+  if (contacts.some(c => c.emails.includes(email))) return redirectContacts(res, "cExists");
+  const lang = ["pt", "es", "en"].includes(req.body.lang) ? req.body.lang : null;
+  // Passa pela mesma regra dos convidados: o mesmo nome noutro domínio junta-se
+  // ao contacto que já existe em vez de abrir ficha nova.
+  const r = await rememberPeople(store, [{ name, email, lang }]);
+  redirectContacts(res, r && r.aliased ? "cMerged" : "cAdded");
+});
+
+app.post("/admin/contacts/merge", requireAdmin, async (req, res) => {
+  const { a, b, into } = req.body;
+  const from = into === a ? b : a;
+  if (into && from && into !== from) await mergeContacts(store, String(into), String(from));
+  redirectContacts(res, "merged");
+});
+
+// "Não, são pessoas diferentes" — para a sugestão não voltar a aparecer.
+app.post("/admin/contacts/distinct", requireAdmin, async (req, res) => {
+  const { a, b } = req.body;
+  if (a && b && a !== b) await store.addDistinct(String(a), String(b));
+  redirectContacts(res, "notDupDone");
+});
+
+app.post("/admin/contacts/:id", requireAdmin, async (req, res) => {
+  const contacts = await store.listContacts();
+  const c = contacts.find(x => x.id === req.params.id);
+  if (!c) return res.redirect("/admin/contacts");
+
+  const name = String(req.body.name || "").trim().slice(0, 120) || c.name;
+  // O email principal só pode ser um dos que já pertencem a esta pessoa.
+  const email = c.emails.includes(emailKey(req.body.email)) ? emailKey(req.body.email) : c.email;
+  const lang = ["pt", "es", "en"].includes(req.body.lang) ? req.body.lang : null;
+  await store.updateContact(c.id, { name, email, lang });
+
+  const extra = emailKey(req.body.addEmail).slice(0, 200);
+  if (extra && extra.includes("@")) {
+    const owner = contacts.find(x => x.emails.includes(extra));
+    if (owner && owner.id !== c.id) return redirectContacts(res, "cExists");
+    if (!owner) await store.addContactEmail(c.id, extra);
+  }
+  redirectContacts(res, "cSaved");
+});
+
+app.post("/admin/contacts/:id/email", requireAdmin, async (req, res) => {
+  const contacts = await store.listContacts();
+  const c = contacts.find(x => x.id === req.params.id);
+  const drop = emailKey(req.body.drop);
+  // O principal nunca sai: ficaria um contacto sem forma de ser convidado.
+  if (c && drop && drop !== c.email.toLowerCase()) await store.removeContactEmail(drop);
+  redirectContacts(res, "cSaved");
+});
+
+app.post("/admin/contacts/:id/delete", requireAdmin, async (req, res) => {
+  await store.deleteContact(req.params.id);
+  redirectContacts(res, "cDeleted");
+});
+
+const members = (b) => [].concat(b.member || []).map(String).slice(0, 500);
+
+app.post("/admin/groups", requireAdmin, async (req, res) => {
+  const name = String(req.body.name || "").trim().slice(0, 120);
+  if (!name) return res.redirect("/admin/contacts");
+  await store.saveGroup({ id: makeId(), name, members: members(req.body) });
+  redirectContacts(res, "gSaved");
+});
+
+app.post("/admin/groups/:id", requireAdmin, async (req, res) => {
+  const name = String(req.body.name || "").trim().slice(0, 120);
+  if (!name) return res.redirect("/admin/contacts");
+  await store.saveGroup({ id: req.params.id, name, members: members(req.body) });
+  redirectContacts(res, "gSaved");
+});
+
+app.post("/admin/groups/:id/delete", requireAdmin, async (req, res) => {
+  await store.deleteGroup(req.params.id);
+  redirectContacts(res, "gDeleted");
 });
 
 /* -------------------------------------------------------- participant */

@@ -171,6 +171,37 @@ export function parsePeople(raw, allowed = ["pt", "es", "en"]) {
   return out;
 }
 
+/* --------------------------------------------------------- contactos */
+
+export const emailKey = (e) => String(e || "").trim().toLowerCase();
+
+/**
+ * A parte antes do @, sem pontuação e sem etiqueta +tag:
+ *   m.barbosa+teste@seidor.es -> mbarbosa
+ * É o que permite reconhecer mbarbosa@seidor.es e mbarbosa@seidor.com como
+ * a mesma pessoa — mas só quando o nome também bate certo (ver matchContact).
+ */
+export function localKey(e) {
+  return emailKey(e).split("@")[0].split("+")[0].replace(/[._-]/g, "");
+}
+
+// Caixas partilhadas: nunca são "a mesma pessoa" só por terem o mesmo prefixo.
+const SHARED_BOXES = new Set([
+  "info", "geral", "general", "contacto", "contact", "comercial", "sales",
+  "admin", "administracao", "suporte", "support", "help", "hello", "ola",
+  "financeiro", "contabilidade", "rh", "hr", "marketing", "noreply", "no-reply",
+  "email", "mail", "office", "reception", "rececao", "secretaria"
+]);
+
+export const isSharedBox = (e) => SHARED_BOXES.has(localKey(e));
+
+// "José Mª Castro-Barbosa" -> "jose m castro barbosa"
+export function normName(n) {
+  return String(n || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 // Arredonda para o quarto de hora mais próximo: 10:07 -> 10:00, 10:08 -> 10:15.
 export function snap15(h) {
   const [hh, mm] = h.split(":").map(Number);

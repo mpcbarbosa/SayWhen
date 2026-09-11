@@ -137,6 +137,36 @@ tr.tally b{font-weight:500;margin:0 5px}
 .savebar.dirty p{color:var(--accent-ink);font-weight:500}
 .savebar.saved{border-color:var(--yes);background:var(--yes-soft)}
 .savebar.saved p{color:var(--yes);font-weight:500}
+.picker{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.picker-head{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.picker-head input{flex:1;min-width:120px}
+.picker-head .cnt{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
+.chip{border:1px solid var(--line);background:var(--surface);color:var(--accent);border-radius:999px;
+  padding:5px 12px;font-size:12.5px;font-weight:500;cursor:pointer;line-height:1.3}
+.chip:hover{background:var(--accent-soft)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+.pick-list{max-height:236px;overflow-y:auto}
+.pick-item{display:flex;gap:10px;align-items:baseline;padding:7px 12px;cursor:pointer;
+  border-bottom:1px solid var(--surface-2)}
+.pick-item:last-child{border-bottom:none}
+.pick-item:hover{background:var(--surface-2)}
+.pick-item input{width:auto;flex:none;align-self:center}
+.pick-item b{font-weight:500}
+.pick-item span{color:var(--muted);font-size:12.5px}
+.pick-none{padding:14px 12px;color:var(--muted);font-size:12.5px}
+.tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tag{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;
+  padding:2px 4px 2px 10px;font-size:11.5px;color:var(--muted);background:var(--surface)}
+.tag button{border:none;background:transparent;color:var(--muted);cursor:pointer;
+  width:18px;height:18px;border-radius:50%;line-height:1;padding:0}
+.tag button:hover{background:var(--no-soft);color:var(--no)}
+.contact-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:14px 0;
+  border-bottom:1px solid var(--line)}
+.contact-row:last-of-type{border-bottom:none}
+details.members{border:1px solid var(--line);border-radius:var(--radius)}
+details.members summary{padding:9px 12px;cursor:pointer;font-size:13px;color:var(--accent)}
+details.members .pick-list{border-top:1px solid var(--line)}
 .toast{position:fixed;left:20px;bottom:20px;background:#3c4043;color:#fff;padding:12px 18px;
   border-radius:4px;font-size:13.5px;max-width:min(420px,calc(100% - 40px));opacity:0;
   pointer-events:none;transition:opacity .18s ease;z-index:60}
@@ -205,10 +235,116 @@ export function loginPage(lang, error) {
   return layout(lang, t(lang, "appName"), body);
 }
 
+/* ------------------------------------------------- seletor de pessoas */
+// A lista guardada, para marcar em vez de escrever. O campo de texto continua
+// a mandar: o que está marcado aqui é só o reflexo do que lá está escrito.
+export function picker(lang, contacts, groups, boxId) {
+  if (!contacts.length) {
+    return `<div class="picker" id="${boxId}"><p class="pick-none">${esc(t(lang, "pickEmpty"))}</p></div>`;
+  }
+  const byId = new Map(contacts.map(c => [c.id, c]));
+  const chips = groups
+    .filter(g => g.members.some(m => byId.has(m)))
+    .map(g => `<button type="button" class="chip" aria-pressed="false"
+        data-emails="${esc(g.members.filter(m => byId.has(m)).map(m => byId.get(m).email).join(","))}"
+      >${esc(g.name)}</button>`).join("");
+
+  const items = contacts.map(c => `
+    <label class="pick-item" data-find="${esc((c.name + " " + c.emails.join(" ")).toLowerCase())}">
+      <input type="checkbox" data-email="${esc(c.email)}"
+             data-line="${esc(`${c.name} ${c.email}${c.lang ? " " + c.lang : ""}`)}">
+      <b>${esc(c.name)}</b> <span>${esc(c.email)}</span>
+    </label>`).join("");
+
+  return `
+  <div class="picker" id="${boxId}">
+    <div class="picker-head">
+      <input type="search" class="pick-search" placeholder="${esc(t(lang, "pickSearch"))}" autocomplete="off">
+      <span class="cnt">0</span>
+    </div>
+    ${chips ? `<div class="chips">${chips}</div>` : ""}
+    <div class="pick-list">${items}</div>
+  </div>`;
+}
+
+// Liga o seletor ao campo de texto. Nos dois sentidos: marcar acrescenta a
+// linha, desmarcar tira-a, e escrever à mão volta a acertar as caixas.
+const PICKER_SCRIPT = (boxId, textareaSel, lang) => `
+(function(){
+  var box=document.getElementById(${JSON.stringify(boxId)});
+  var ta=document.querySelector(${JSON.stringify(textareaSel)});
+  var cnt=box&&box.querySelector('.cnt');
+  var search=box&&box.querySelector('.pick-search');
+  // Agenda vazia: o seletor é só uma frase, não há nada a ligar.
+  if(!box||!ta||!cnt||!search) return;
+  var boxes=[].slice.call(box.querySelectorAll('.pick-item input'));
+  var chips=[].slice.call(box.querySelectorAll('.chip'));
+  var mailRe=/([^\\s<,;]+@[^\\s>,;]+)/;
+
+  function emailsIn(){
+    var out=[];
+    ta.value.split(/[\\n;]+/).forEach(function(l){
+      var m=l.match(mailRe);
+      if(m) out.push(m[1].toLowerCase().replace(/[.,;>]+$/,''));
+    });
+    return out;
+  }
+  function lines(){ return ta.value.split('\\n'); }
+  function addLine(line,email){
+    if(emailsIn().indexOf(email)>=0) return;
+    var v=ta.value.replace(/\\s+$/,'');
+    ta.value=(v?v+'\\n':'')+line;
+  }
+  function dropLine(email){
+    ta.value=lines().filter(function(l){
+      var m=l.match(mailRe);
+      return !(m && m[1].toLowerCase().replace(/[.,;>]+$/,'')===email);
+    }).join('\\n');
+  }
+  function refresh(){
+    var have=emailsIn(), n=0;
+    boxes.forEach(function(b){
+      b.checked = have.indexOf(b.dataset.email)>=0;
+      if(b.checked) n++;
+    });
+    chips.forEach(function(ch){
+      var ids=ch.dataset.emails.split(',').filter(Boolean);
+      var all=ids.length>0 && ids.every(function(e){ return have.indexOf(e)>=0; });
+      ch.setAttribute('aria-pressed', all?'true':'false');
+    });
+    cnt.textContent=${JSON.stringify(t(lang, "pickCount"))}.replace('{n}',n).replace('{t}',boxes.length);
+  }
+  boxes.forEach(function(b){
+    b.addEventListener('change',function(){
+      if(b.checked) addLine(b.dataset.line,b.dataset.email); else dropLine(b.dataset.email);
+      ta.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+  });
+  chips.forEach(function(ch){
+    ch.addEventListener('click',function(){
+      var on=ch.getAttribute('aria-pressed')==='true';
+      var wanted=ch.dataset.emails.split(',').filter(Boolean);
+      boxes.forEach(function(b){
+        if(wanted.indexOf(b.dataset.email)<0) return;
+        if(on) dropLine(b.dataset.email); else addLine(b.dataset.line,b.dataset.email);
+      });
+      refresh();
+    });
+  });
+  ta.addEventListener('input',refresh);
+  search.addEventListener('input',function(){
+    var q=search.value.trim().toLowerCase();
+    box.querySelectorAll('.pick-item').forEach(function(it){
+      it.hidden = q!=='' && it.dataset.find.indexOf(q)<0;
+    });
+  });
+  refresh();
+})();`;
+
 /* -------------------------------------------------------- admin home */
 /* ---------------------------------------------- formulário partilhado */
 // Usado para criar uma sondagem nova e para editar um rascunho.
-function pollForm(lang, { action, poll, people, formId, primary, draft, showDraft = true }) {
+function pollForm(lang, { action, poll, people, formId, primary, draft, showDraft = true, contacts = [], groups = [] }) {
   const today = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   const timeOptions = timeOpts;
@@ -273,11 +409,15 @@ function pollForm(lang, { action, poll, people, formId, primary, draft, showDraf
           <div class="stack" id="slots" style="gap:8px">${slots}</div>
           <div style="margin-top:10px"><button class="btn btn-sm" type="button" id="addSlot">+ ${esc(t(lang, "addSlot"))}</button></div>
         </div>
-        <label class="field">${esc(t(lang, "fPeople"))}
-          <textarea name="people" rows="5" ${draft ? "" : "required"}
-            placeholder="Ana Ribeiro ana@cliente.pt&#10;Bruno Cardoso bruno@empresa.com">${esc(peopleText)}</textarea>
-        </label>
-        <p class="hint">${esc(t(lang, "fPeopleHint"))}</p>
+        <div class="stack" style="gap:8px">
+          <h3>${esc(t(lang, "fPeople"))}</h3>
+          ${picker(lang, contacts, groups, `pick-${formId}`)}
+          <label class="field">${esc(t(lang, "fPeopleText"))}
+            <textarea name="people" rows="5" ${draft ? "" : "required"}
+              placeholder="Ana Ribeiro ana@cliente.pt&#10;Bruno Cardoso bruno@empresa.com">${esc(peopleText)}</textarea>
+          </label>
+          <p class="hint">${esc(t(lang, "fPeopleHint"))}</p>
+        </div>
         <label class="row" style="gap:8px;font-size:13px;cursor:pointer">
           <input type="checkbox" name="selfJoin" value="1" checked style="width:auto">
           ${esc(t(lang, "selfJoin"))}
@@ -307,10 +447,16 @@ const FORM_SCRIPT = (lang, formId) => `
     var b=document.getElementById('createBtn');
     // Desativar já retirava o botão dos dados enviados — só depois da serialização.
     setTimeout(function(){ b.disabled=true; b.textContent=${JSON.stringify(t(lang, "creating"))}; }, 0);
-  });`;
+  });
+  ${PICKER_SCRIPT(`pick-${formId}`, `#${formId} textarea[name=people]`, lang)}`;
+
+// Topo das páginas do organizador.
+const adminNav = (lang) => `
+  <a class="btn btn-text btn-sm" href="/admin/contacts">${esc(t(lang, "contactsTitle"))}</a>
+  <a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
 
 /* -------------------------------------------------------- admin home */
-export function adminHome(lang, polls, flash) {
+export function adminHome(lang, polls, flash, contacts = [], groups = []) {
   const list = polls.length
     ? `<div class="list">${polls.map(p => `
       <div class="list-item">
@@ -332,7 +478,8 @@ export function adminHome(lang, polls, flash) {
   <div class="stack">
     <section class="card">
       <div class="card-head"><h2>${esc(t(lang, "newPoll"))}</h2></div>
-      ${pollForm(lang, { action: "/admin/polls", poll: null, people: [], formId: "newPoll", primary: t(lang, "createBtn"), draft: false })}
+      ${pollForm(lang, { action: "/admin/polls", poll: null, people: [], formId: "newPoll",
+        primary: t(lang, "createBtn"), draft: false, contacts, groups })}
     </section>
 
     <section class="card">
@@ -341,12 +488,12 @@ export function adminHome(lang, polls, flash) {
     </section>
   </div>`;
 
-  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  const right = adminNav(lang);
   return layout(lang, t(lang, "adminTitle"), body, { script: FORM_SCRIPT(lang, "newPoll"), rightSlot: right });
 }
 
 /* ------------------------------------------------------- admin draft */
-export function adminDraft(lang, poll, people, flash) {
+export function adminDraft(lang, poll, people, flash, contacts = [], groups = []) {
   const body = `
   ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
   <div class="stack">
@@ -361,21 +508,21 @@ export function adminDraft(lang, poll, people, flash) {
       </div>
       ${pollForm(lang, {
         action: `/admin/polls/${esc(poll.id)}/update`, poll, people,
-        formId: "draftForm", primary: t(lang, "publishDraft"), draft: true
+        formId: "draftForm", primary: t(lang, "publishDraft"), draft: true, contacts, groups
       })}
     </section>
     <form method="post" action="/admin/polls/${esc(poll.id)}/delete"
-          onsubmit="return confirm(${JSON.stringify(t(lang, "confirmDelete"))})">
+          onsubmit="return confirm(${esc(JSON.stringify(t(lang, "confirmDelete")))})">
       <button class="btn btn-text btn-sm btn-danger" type="submit">${esc(t(lang, "deletePoll"))}</button>
     </form>
   </div>`;
 
-  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  const right = adminNav(lang);
   return layout(lang, poll.title || t(lang, "untitled"), body, { script: FORM_SCRIPT(lang, "draftForm"), rightSlot: right });
 }
 
 /* -------------------------------------------------------- admin edit */
-export function adminEdit(lang, poll, people, flash) {
+export function adminEdit(lang, poll, people, flash, contacts = [], groups = []) {
   const body = `
   ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
   <div class="stack">
@@ -387,17 +534,17 @@ export function adminEdit(lang, poll, people, flash) {
       <div class="card-head"><h2>${esc(t(lang, "editPoll"))}</h2></div>
       ${pollForm(lang, {
         action: `/admin/polls/${esc(poll.id)}/update`, poll, people,
-        formId: "editForm", primary: t(lang, "saveChanges"), draft: false, showDraft: false
+        formId: "editForm", primary: t(lang, "saveChanges"), draft: false, showDraft: false, contacts, groups
       })}
     </section>
   </div>`;
 
-  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  const right = adminNav(lang);
   return layout(lang, poll.title || t(lang, "untitled"), body, { script: FORM_SCRIPT(lang, "editForm"), rightSlot: right });
 }
 
 /* -------------------------------------------------------- admin poll */
-export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
+export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true, contacts = [], groups = []) {
   const pl = poll.lang || lang;
   const ordered = sortSlots(poll.slots);
   const tal = tallies(poll, invitees);
@@ -536,7 +683,7 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
           </form>
           <div class="spacer"></div>
           <form method="post" action="/admin/polls/${esc(poll.id)}/delete" style="display:inline"
-            onsubmit="return confirm(${JSON.stringify(t(lang, "confirmDelete"))})">
+            onsubmit="return confirm(${esc(JSON.stringify(t(lang, "confirmDelete")))})">
             <button class="btn btn-text btn-sm btn-danger" type="submit">${esc(t(lang, "deletePoll"))}</button>
           </form>
         </div>
@@ -588,9 +735,11 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
           <button class="btn" type="submit">${esc(t(lang, "joinBtn"))}</button>
         </form>`}
         <div class="list">${people}</div>
-        <form method="post" action="/admin/polls/${esc(poll.id)}/people" class="stack"
+        <form method="post" action="/admin/polls/${esc(poll.id)}/people" class="stack" id="addForm"
               style="border-top:1px solid var(--line);padding-top:16px;gap:10px">
-          <label class="field">${esc(t(lang, "addPeople"))}
+          <h3>${esc(t(lang, "addPeople"))}</h3>
+          ${picker(lang, contacts, groups, "pick-addForm")}
+          <label class="field">${esc(t(lang, "fPeopleText"))}
             <textarea name="people" rows="3" required
               placeholder="Sofia Neves sofia@cliente.pt"></textarea>
           </label>
@@ -619,10 +768,186 @@ export function adminPoll(lang, poll, invitees, baseUrl, flash, mailOn = true) {
   document.getElementById('allBtn').addEventListener('click',function(){
     copyText(${JSON.stringify(allLinks)}, ${JSON.stringify(t(lang, "allCopied"))});
   });
-  setTimeout(function(){ location.reload(); }, 60000);`;
+  ${PICKER_SCRIPT("pick-addForm", "#addForm textarea[name=people]", lang)}
+  // A recarga automática não pode apagar o que já está escrito à mão.
+  setTimeout(function(){
+    var ta=document.querySelector('#addForm textarea[name=people]');
+    if(!ta || !ta.value.trim()) location.reload();
+  }, 60000);`;
 
-  const right = `<a class="btn btn-text btn-sm" href="/admin/logout">${esc(t(lang, "logout"))}</a>`;
+  const right = adminNav(lang);
   return layout(lang, poll.title, body, { script, rightSlot: right });
+}
+
+/* ---------------------------------------------------- admin contacts */
+export function adminContacts(lang, contacts, groups, pairs, flash) {
+  const langOpts = (sel) =>
+    `<option value="">${esc(t(lang, "langAuto"))}</option>` +
+    LANGS.map(l => `<option value="${l}"${l === sel ? " selected" : ""}>${esc(L(l).name)}</option>`).join("");
+
+  const memberList = (gid, members) => `
+    <div class="pick-list">${contacts.map(c => `
+      <label class="pick-item">
+        <input type="checkbox" name="member" value="${esc(c.id)}"${members.includes(c.id) ? " checked" : ""}>
+        <b>${esc(c.name)}</b> <span>${esc(c.email)}</span>
+      </label>`).join("")}</div>`;
+
+  const dupCard = pairs.length ? `
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "dupTitle"))}</h2></div>
+      <div class="card-body">
+        <p class="hint">${esc(t(lang, "dupHint"))}</p>
+        <div class="list">${pairs.map(({ a, b }) => `
+          <div class="list-item">
+            <div class="grow">
+              <b>${esc(a.name)}</b> <span class="hint">${esc(a.emails.join(", "))}</span><br>
+              <b>${esc(b.name)}</b> <span class="hint">${esc(b.emails.join(", "))}</span>
+            </div>
+            <form method="post" action="/admin/contacts/merge" class="row" style="gap:8px">
+              <input type="hidden" name="a" value="${esc(a.id)}">
+              <input type="hidden" name="b" value="${esc(b.id)}">
+              <button class="btn btn-sm" type="submit" name="into" value="${esc(a.id)}"
+                >${esc(t(lang, "mergeInto", { e: a.email }))}</button>
+              <button class="btn btn-sm" type="submit" name="into" value="${esc(b.id)}"
+                >${esc(t(lang, "mergeInto", { e: b.email }))}</button>
+              <button class="btn btn-sm btn-text" type="submit"
+                      formaction="/admin/contacts/distinct">${esc(t(lang, "notDup"))}</button>
+            </form>
+          </div>`).join("")}</div>
+      </div>
+    </section>` : "";
+
+  const rows = contacts.length ? contacts.map(c => {
+    const others = c.emails.filter(e => e !== c.email.toLowerCase());
+    return `
+    <form method="post" action="/admin/contacts/${esc(c.id)}" class="contact-row"
+          data-find="${esc((c.name + " " + c.emails.join(" ")).toLowerCase())}">
+      <label class="field" style="flex:2;min-width:180px">${esc(t(lang, "cName"))}
+        <input type="text" name="name" value="${esc(c.name)}" required>
+      </label>
+      <label class="field" style="flex:2;min-width:210px">${esc(t(lang, "cMain"))}
+        <select name="email">
+          ${c.emails.map(e => `<option value="${esc(e)}"${e === c.email.toLowerCase() ? " selected" : ""}>${esc(e)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="field" style="flex:1;min-width:120px">${esc(t(lang, "cLang"))}
+        <select name="lang">${langOpts(c.lang || "")}</select>
+      </label>
+      <label class="field" style="flex:2;min-width:190px">${esc(t(lang, "cAddEmail"))}
+        <input type="email" name="addEmail" placeholder="nome@outrodominio.com">
+      </label>
+      <div class="row" style="gap:6px">
+        <button class="btn btn-sm" type="submit">${esc(t(lang, "cSave"))}</button>
+        <button class="btn btn-sm btn-text btn-danger" type="submit"
+                formaction="/admin/contacts/${esc(c.id)}/delete" formnovalidate
+                onclick="return confirm(${esc(JSON.stringify(t(lang, "cConfirmDelete")))})"
+          >${esc(t(lang, "cDelete"))}</button>
+      </div>
+      ${others.length ? `<div class="tags" style="flex-basis:100%">
+        <span class="hint">${esc(t(lang, "cOther"))}</span>
+        ${others.map(e => `<span class="tag">${esc(e)}
+          <button type="submit" name="drop" value="${esc(e)}" formnovalidate
+                  formaction="/admin/contacts/${esc(c.id)}/email"
+                  aria-label="${esc(t(lang, "cDropEmail"))}" title="${esc(t(lang, "cDropEmail"))}">&times;</button>
+        </span>`).join("")}
+      </div>` : ""}
+    </form>`;
+  }).join("") : `<p class="hint">${esc(t(lang, "cEmpty"))}</p>`;
+
+  const body = `
+  ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
+  <div class="stack">
+    <div class="row"><a class="btn btn-text btn-sm" href="/admin">&larr; ${esc(t(lang, "back"))}</a></div>
+    ${dupCard}
+
+    <section class="card">
+      <div class="card-head">
+        <h2>${esc(t(lang, "contactsTitle"))}</h2>
+        <span class="sub">${esc(t(lang, "cCount", { n: contacts.length }))}</span>
+      </div>
+      <div class="card-body">
+        <p class="hint">${esc(t(lang, "cHint"))}</p>
+        <input type="search" id="cSearch" placeholder="${esc(t(lang, "pickSearch"))}" autocomplete="off">
+        <div id="cList">${rows}</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "cNew"))}</h2></div>
+      <form class="card-body" method="post" action="/admin/contacts">
+        <div class="row">
+          <label class="field" style="flex:2;min-width:180px">${esc(t(lang, "cName"))}
+            <input type="text" name="name" required>
+          </label>
+          <label class="field" style="flex:2;min-width:210px">${esc(t(lang, "cMain"))}
+            <input type="email" name="email" required>
+          </label>
+          <label class="field" style="flex:1;min-width:120px">${esc(t(lang, "cLang"))}
+            <select name="lang">${langOpts("")}</select>
+          </label>
+        </div>
+        <div><button class="btn btn-primary" type="submit">${esc(t(lang, "cAdd"))}</button></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "groupsTitle"))}</h2></div>
+      <div class="card-body">
+        <p class="hint">${esc(t(lang, "gHint"))}</p>
+        ${groups.map(g => `
+        <form method="post" action="/admin/groups/${esc(g.id)}" class="stack" style="gap:10px">
+          <div class="row">
+            <label class="field" style="flex:1;min-width:200px">${esc(t(lang, "gName"))}
+              <input type="text" name="name" value="${esc(g.name)}" required>
+            </label>
+            <div class="row" style="gap:6px">
+              <button class="btn btn-sm" type="submit">${esc(t(lang, "cSave"))}</button>
+              <button class="btn btn-sm btn-text btn-danger" type="submit" formnovalidate
+                      formaction="/admin/groups/${esc(g.id)}/delete"
+                      onclick="return confirm(${esc(JSON.stringify(t(lang, "gConfirmDelete")))})"
+                >${esc(t(lang, "cDelete"))}</button>
+            </div>
+          </div>
+          <details class="members">
+            <summary>${esc(t(lang, "gMembers", { n: g.members.length }))}</summary>
+            ${memberList(g.id, g.members)}
+          </details>
+        </form>`).join("") || `<p class="hint">${esc(t(lang, "gEmpty"))}</p>`}
+
+        <form method="post" action="/admin/groups" class="stack"
+              style="border-top:1px solid var(--line);padding-top:16px;gap:10px">
+          <label class="field" style="max-width:320px">${esc(t(lang, "gNew"))}
+            <input type="text" name="name" required placeholder="${esc(t(lang, "gPlaceholder"))}">
+          </label>
+          ${contacts.length ? `<details class="members">
+            <summary>${esc(t(lang, "gPick"))}</summary>
+            ${memberList("new", [])}
+          </details>` : ""}
+          <div><button class="btn btn-primary" type="submit">${esc(t(lang, "gAdd"))}</button></div>
+        </form>
+      </div>
+    </section>
+  </div>`;
+
+  const script = `
+  var cs=document.getElementById('cSearch');
+  cs.addEventListener('input',function(){
+    var q=cs.value.trim().toLowerCase();
+    document.querySelectorAll('#cList .contact-row').forEach(function(r){
+      r.hidden = q!=='' && r.dataset.find.indexOf(q)<0;
+    });
+  });
+  document.querySelectorAll('details.members').forEach(function(d){
+    var s=d.querySelector('summary'), boxes=d.querySelectorAll('input[name=member]');
+    var base=s.textContent;
+    function upd(){
+      var n=0; boxes.forEach(function(b){ if(b.checked) n++; });
+      s.textContent=base.replace(/\\d+/, n);
+    }
+    boxes.forEach(function(b){ b.addEventListener('change',upd); });
+  });`;
+
+  return layout(lang, t(lang, "contactsTitle"), body, { script, rightSlot: adminNav(lang) });
 }
 
 function sugRow(lang, d, h) {

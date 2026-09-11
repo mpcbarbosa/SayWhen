@@ -54,6 +54,38 @@ async function pgDriver() {
     alter table invitees add column if not exists note text;
     alter table invitees add column if not exists suggestions jsonb;
     alter table invitees add column if not exists lang text;
+
+    create table if not exists contacts (
+      id text primary key,
+      name text not null,
+      email text not null,
+      lang text,
+      created_at timestamptz not null default now()
+    );
+    create unique index if not exists contacts_email_idx on contacts(lower(email));
+    -- Uma pessoa pode ter vários endereços (mbarbosa@seidor.es e .com).
+    create table if not exists contact_emails (
+      email text primary key,
+      contact_id text not null references contacts(id) on delete cascade
+    );
+    create index if not exists contact_emails_contact_idx on contact_emails(contact_id);
+
+    create table if not exists contact_groups (
+      id text primary key,
+      name text not null,
+      created_at timestamptz not null default now()
+    );
+    -- Pares que o organizador já disse não serem a mesma pessoa.
+    create table if not exists contact_distinct (
+      a text not null,
+      b text not null,
+      primary key (a, b)
+    );
+    create table if not exists contact_group_members (
+      group_id text not null references contact_groups(id) on delete cascade,
+      contact_id text not null references contacts(id) on delete cascade,
+      primary key (group_id, contact_id)
+    );
   `);
 
   const rowToPoll = (r) => ({
@@ -174,6 +206,75 @@ async function pgDriver() {
     async deletePoll(pollId) {
       await pool.query("delete from invitees where poll_id=$1", [pollId]);
       await pool.query("delete from polls where id=$1", [pollId]);
+    },
+
+    /* ------------------------------------------------------ contactos */
+    async listContacts() {
+      const { rows } = await pool.query(`
+        select c.*, coalesce(array_agg(e.email) filter (where e.email is not null), '{}') as emails
+        from contacts c left join contact_emails e on e.contact_id = c.id
+        group by c.id order by c.name asc`);
+      return rows.map(r => ({
+        id: r.id, name: r.name, email: r.email, lang: r.lang || null,
+        emails: [...new Set([r.email.toLowerCase(), ...(r.emails || [])])]
+      }));
+    },
+    async addContact(c) {
+      await pool.query(
+        `insert into contacts (id,name,email,lang) values ($1,$2,$3,$4)
+         on conflict do nothing`,
+        [c.id, c.name, c.email, c.lang || null]);
+      await pool.query(
+        `insert into contact_emails (email,contact_id) values ($1,$2)
+         on conflict (email) do nothing`, [c.email, c.id]);
+    },
+    async updateContact(id, f) {
+      await pool.query("update contacts set name=$2, email=$3, lang=$4 where id=$1",
+        [id, f.name, f.email, f.lang || null]);
+      await pool.query(
+        `insert into contact_emails (email,contact_id) values ($1,$2)
+         on conflict (email) do update set contact_id=excluded.contact_id`, [f.email, id]);
+    },
+    async addContactEmail(contactId, email) {
+      await pool.query(
+        `insert into contact_emails (email,contact_id) values ($1,$2)
+         on conflict (email) do update set contact_id=excluded.contact_id`, [email, contactId]);
+    },
+    async removeContactEmail(email) {
+      await pool.query("delete from contact_emails where email=$1", [email]);
+    },
+    async deleteContact(id) {
+      await pool.query("delete from contacts where id=$1", [id]);
+    },
+    async listGroups() {
+      const { rows } = await pool.query(`
+        select g.*, coalesce(array_agg(m.contact_id) filter (where m.contact_id is not null), '{}') as members
+        from contact_groups g left join contact_group_members m on m.group_id = g.id
+        group by g.id order by g.name asc`);
+      return rows.map(r => ({ id: r.id, name: r.name, members: r.members || [] }));
+    },
+    async saveGroup(g) {
+      await pool.query(
+        `insert into contact_groups (id,name) values ($1,$2)
+         on conflict (id) do update set name=excluded.name`, [g.id, g.name]);
+      await pool.query("delete from contact_group_members where group_id=$1", [g.id]);
+      for (const cid of g.members) {
+        await pool.query(
+          `insert into contact_group_members (group_id,contact_id) values ($1,$2)
+           on conflict do nothing`, [g.id, cid]);
+      }
+    },
+    async deleteGroup(id) {
+      await pool.query("delete from contact_groups where id=$1", [id]);
+    },
+    async listDistinct() {
+      const { rows } = await pool.query("select a,b from contact_distinct");
+      return rows.map(r => `${r.a}|${r.b}`);
+    },
+    async addDistinct(a, b) {
+      const [x, y] = [a, b].sort();
+      await pool.query(
+        "insert into contact_distinct (a,b) values ($1,$2) on conflict do nothing", [x, y]);
     }
   };
 }
@@ -183,10 +284,11 @@ async function fileDriver() {
   const file = path.join(DATA_DIR, "db.json");
   await fs.mkdir(DATA_DIR, { recursive: true });
 
-  let db = { polls: {}, invitees: {} };
+  let db = { polls: {}, invitees: {}, contacts: {}, contactEmails: {}, groups: {}, distinct: {} };
   try {
     db = JSON.parse(await fs.readFile(file, "utf8"));
     db.polls ||= {}; db.invitees ||= {};
+    db.contacts ||= {}; db.contactEmails ||= {}; db.groups ||= {}; db.distinct ||= {};
   } catch { /* first run */ }
 
   let queue = Promise.resolve();
@@ -293,6 +395,65 @@ async function fileDriver() {
     async deletePoll(pollId) {
       delete db.polls[pollId];
       for (const [tk, i] of Object.entries(db.invitees)) if (i.pollId === pollId) delete db.invitees[tk];
+      await flush();
+    },
+
+    /* ------------------------------------------------------ contactos */
+    async listContacts() {
+      return Object.values(db.contacts)
+        .map(c => ({
+          ...c,
+          emails: [...new Set([
+            c.email.toLowerCase(),
+            ...Object.entries(db.contactEmails).filter(([, id]) => id === c.id).map(([e]) => e)
+          ])]
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    async addContact(c) {
+      db.contacts[c.id] = { id: c.id, name: c.name, email: c.email, lang: c.lang || null };
+      db.contactEmails[c.email] = c.id;
+      await flush();
+    },
+    async updateContact(id, f) {
+      const c = db.contacts[id];
+      if (!c) return;
+      c.name = f.name; c.email = f.email; c.lang = f.lang || null;
+      db.contactEmails[f.email] = id;
+      await flush();
+    },
+    async addContactEmail(contactId, email) {
+      db.contactEmails[email] = contactId;
+      await flush();
+    },
+    async removeContactEmail(email) {
+      delete db.contactEmails[email];
+      await flush();
+    },
+    async deleteContact(id) {
+      delete db.contacts[id];
+      for (const [e, cid] of Object.entries(db.contactEmails)) if (cid === id) delete db.contactEmails[e];
+      for (const g of Object.values(db.groups)) g.members = (g.members || []).filter(m => m !== id);
+      await flush();
+    },
+    async listGroups() {
+      return Object.values(db.groups)
+        .map(g => ({ id: g.id, name: g.name, members: g.members || [] }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    async saveGroup(g) {
+      db.groups[g.id] = { id: g.id, name: g.name, members: [...g.members] };
+      await flush();
+    },
+    async deleteGroup(id) {
+      delete db.groups[id];
+      await flush();
+    },
+    async listDistinct() {
+      return Object.keys(db.distinct);
+    },
+    async addDistinct(a, b) {
+      db.distinct[[a, b].sort().join("|")] = true;
       await flush();
     }
   };
