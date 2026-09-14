@@ -115,12 +115,12 @@ export async function mergeContacts(store, intoId, fromId) {
 
   // Os endereços mudam de dono primeiro, para não caírem com o contacto antigo.
   for (const e of from.emails) await store.addContactEmail(into.id, e);
+  // O que fica herda os grupos dos dois.
   const groups = await store.listGroups();
-  for (const g of groups) {
-    if (!g.members.includes(from.id)) continue;
-    const members = [...new Set(g.members.map(m => (m === from.id ? into.id : m)))];
-    await store.saveGroup({ ...g, members });
-  }
+  const juntos = groups
+    .filter(g => g.members.includes(from.id) || g.members.includes(into.id))
+    .map(g => g.id);
+  if (juntos.length) await store.setContactGroups(into.id, juntos);
   await store.deleteContact(from.id);
   if (!into.lang && from.lang) {
     await store.updateContact(into.id, { name: into.name, email: into.email, lang: from.lang });

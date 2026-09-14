@@ -257,11 +257,14 @@ async function pgDriver() {
       await pool.query(
         `insert into contact_groups (id,name) values ($1,$2)
          on conflict (id) do update set name=excluded.name`, [g.id, g.name]);
-      await pool.query("delete from contact_group_members where group_id=$1", [g.id]);
-      for (const cid of g.members) {
+    },
+    // Quem pertence a quê decide-se na ficha da pessoa, não na do grupo.
+    async setContactGroups(contactId, groupIds) {
+      await pool.query("delete from contact_group_members where contact_id=$1", [contactId]);
+      for (const gid of groupIds) {
         await pool.query(
           `insert into contact_group_members (group_id,contact_id) values ($1,$2)
-           on conflict do nothing`, [g.id, cid]);
+           on conflict do nothing`, [gid, contactId]);
       }
     },
     async deleteGroup(id) {
@@ -442,7 +445,18 @@ async function fileDriver() {
         .sort((a, b) => a.name.localeCompare(b.name));
     },
     async saveGroup(g) {
-      db.groups[g.id] = { id: g.id, name: g.name, members: [...g.members] };
+      const antes = db.groups[g.id];
+      db.groups[g.id] = { id: g.id, name: g.name, members: antes ? antes.members : [] };
+      await flush();
+    },
+    // Quem pertence a quê decide-se na ficha da pessoa, não na do grupo.
+    async setContactGroups(contactId, groupIds) {
+      for (const g of Object.values(db.groups)) {
+        const dentro = groupIds.includes(g.id);
+        const tinha = (g.members || []).includes(contactId);
+        if (dentro && !tinha) g.members = [...(g.members || []), contactId];
+        else if (!dentro && tinha) g.members = g.members.filter(m => m !== contactId);
+      }
       await flush();
     },
     async deleteGroup(id) {

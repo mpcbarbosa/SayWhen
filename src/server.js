@@ -420,6 +420,9 @@ app.post("/admin/polls/:id/delete", requireAdmin, async (req, res) => {
 const redirectContacts = (res, key) =>
   res.redirect(`/admin/contacts?ok=${encodeURIComponent(t(UI_LANG, key))}`);
 
+// Os grupos marcados na ficha de uma pessoa.
+const groupIds = (b) => [].concat(b.group || []).map(String).slice(0, 100);
+
 app.get("/admin/contacts", requireAdmin, async (req, res) => {
   const { contacts, groups } = await book();
   const distinct = await store.listDistinct();
@@ -436,6 +439,8 @@ app.post("/admin/contacts", requireAdmin, async (req, res) => {
   // Passa pela mesma regra dos convidados: o mesmo nome noutro domínio junta-se
   // ao contacto que já existe em vez de abrir ficha nova.
   const r = await rememberPeople(store, [{ name, email, lang }]);
+  const criado = (await store.listContacts()).find(c => c.emails.includes(email));
+  if (criado) await store.setContactGroups(criado.id, groupIds(req.body));
   redirectContacts(res, r && r.aliased ? "cMerged" : "cAdded");
 });
 
@@ -463,6 +468,7 @@ app.post("/admin/contacts/:id", requireAdmin, async (req, res) => {
   const email = c.emails.includes(emailKey(req.body.email)) ? emailKey(req.body.email) : c.email;
   const lang = ["pt", "es", "en"].includes(req.body.lang) ? req.body.lang : null;
   await store.updateContact(c.id, { name, email, lang });
+  await store.setContactGroups(c.id, groupIds(req.body));
 
   const extra = emailKey(req.body.addEmail).slice(0, 200);
   if (extra && extra.includes("@")) {
@@ -487,19 +493,17 @@ app.post("/admin/contacts/:id/delete", requireAdmin, async (req, res) => {
   redirectContacts(res, "cDeleted");
 });
 
-const members = (b) => [].concat(b.member || []).map(String).slice(0, 500);
-
 app.post("/admin/groups", requireAdmin, async (req, res) => {
   const name = String(req.body.name || "").trim().slice(0, 120);
   if (!name) return res.redirect("/admin/contacts");
-  await store.saveGroup({ id: makeId(), name, members: members(req.body) });
+  await store.saveGroup({ id: makeId(), name });
   redirectContacts(res, "gSaved");
 });
 
 app.post("/admin/groups/:id", requireAdmin, async (req, res) => {
   const name = String(req.body.name || "").trim().slice(0, 120);
   if (!name) return res.redirect("/admin/contacts");
-  await store.saveGroup({ id: req.params.id, name, members: members(req.body) });
+  await store.saveGroup({ id: req.params.id, name });
   redirectContacts(res, "gSaved");
 });
 
