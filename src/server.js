@@ -421,7 +421,7 @@ const redirectContacts = (res, key) =>
   res.redirect(`/admin/contacts?ok=${encodeURIComponent(t(UI_LANG, key))}`);
 
 // Os grupos marcados na ficha de uma pessoa.
-const groupIds = (b) => [].concat(b.group || []).map(String).slice(0, 100);
+const groupIds = (b) => [].concat(b.group || []).map(String).filter(Boolean).slice(0, 100);
 
 app.get("/admin/contacts", requireAdmin, async (req, res) => {
   const { contacts, groups } = await book();

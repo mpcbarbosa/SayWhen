@@ -161,23 +161,27 @@ tr.tally b{font-weight:500;margin:0 5px}
 .tag button{border:none;background:transparent;color:var(--muted);cursor:pointer;
   width:18px;height:18px;border-radius:50%;line-height:1;padding:0}
 .tag button:hover{background:var(--no-soft);color:var(--no)}
-.contact-row{display:flex;flex-direction:column;gap:8px;padding:14px 0;
-  border-bottom:1px solid var(--line)}
-.contact-row:last-of-type{border-bottom:none}
-.contact-main{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
-.contact-side{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.contact-side .add-email{width:auto;flex:0 1 210px;padding:4px 10px;font-size:12.5px;
-  border-radius:999px;border-style:dashed}
-.gchip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;
-  padding:4px 12px;font-size:12.5px;color:var(--muted);background:var(--surface);
-  cursor:pointer;user-select:none}
-.gchip:hover{background:var(--surface-2)}
-.gchip input{position:absolute;opacity:0;width:0;height:0;margin:0}
-.gchip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:500}
-.gchip input:focus-visible+*,.gchip:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.ctable{display:flex;flex-direction:column}
+.chead,.crow{display:grid;gap:10px;align-items:center;
+  grid-template-columns:minmax(125px,1.4fr) minmax(165px,1.9fr) minmax(122px,.9fr) minmax(120px,1fr) auto}
+.chead{padding-bottom:8px;border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.crow{padding:7px 0;border-bottom:1px solid var(--line)}
+.crow:last-of-type{border-bottom:none}
+.crow input[type=text],.crow select,.crow input[type=email]{padding:6px 9px;font-size:13px}
+.crow .acts{display:flex;gap:2px;justify-content:flex-end;align-items:center}
+.crow .more-btn{font-size:16px;line-height:1;padding:4px 9px}
+.crow .more{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:2px 0 6px}
+.crow .more input{flex:0 1 240px;border-style:dashed}
 .group-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .group-row input[type=text]{flex:1;min-width:180px;max-width:320px}
 .group-row .hint{min-width:80px}
+@media (max-width:860px){
+  .chead{display:none}
+  .crow{grid-template-columns:1fr 1fr;padding:12px 0}
+  .crow>input[name=name],.crow>select[name=email]{grid-column:1/-1}
+  .crow .acts{grid-column:1/-1;justify-content:flex-start}
+}
 .toast{position:fixed;left:20px;bottom:20px;background:#3c4043;color:#fff;padding:12px 18px;
   border-radius:4px;font-size:13.5px;max-width:min(420px,calc(100% - 40px));opacity:0;
   pointer-events:none;transition:opacity .18s ease;z-index:60}
@@ -797,19 +801,9 @@ export function adminContacts(lang, contacts, groups, pairs, flash) {
   const langOpts = (sel) =>
     `<option value="">${esc(t(lang, "langAuto"))}</option>` +
     LANGS.map(l => `<option value="${l}"${l === sel ? " selected" : ""}>${esc(L(l).name)}</option>`).join("");
-
-  // Os grupos de uma pessoa: etiquetas para ligar e desligar, na própria linha.
-  const groupChips = (memberOf) => groups.length
-    ? `<div class="tags">
-        <span class="hint">${esc(t(lang, "cGroups"))}</span>
-        ${groups.map(g => {
-          const on = memberOf.includes(g.id);
-          return `<label class="gchip${on ? " on" : ""}">
-            <input type="checkbox" name="group" value="${esc(g.id)}"${on ? " checked" : ""}>${esc(g.name)}
-          </label>`;
-        }).join("")}
-      </div>`
-    : "";
+  const groupOpts = (sel) =>
+    `<option value="">${esc(t(lang, "noGroup"))}</option>` +
+    groups.map(g => `<option value="${esc(g.id)}"${g.id === sel ? " selected" : ""}>${esc(g.name)}</option>`).join("");
 
   const dupCard = pairs.length ? `
     <section class="card">
@@ -836,50 +830,90 @@ export function adminContacts(lang, contacts, groups, pairs, flash) {
       </div>
     </section>` : "";
 
-  const rows = contacts.length ? contacts.map(c => {
+  const rows = contacts.map(c => {
     const others = c.emails.filter(e => e !== c.email.toLowerCase());
-    const memberOf = groups.filter(g => g.members.includes(c.id)).map(g => g.id);
+    const mine = groups.find(g => g.members.includes(c.id));
     return `
-    <form method="post" action="/admin/contacts/${esc(c.id)}" class="contact-row"
+    <form method="post" action="/admin/contacts/${esc(c.id)}" class="crow"
           data-find="${esc((c.name + " " + c.emails.join(" ")).toLowerCase())}">
-      <div class="contact-main">
-        <label class="field" style="flex:2;min-width:170px">${esc(t(lang, "cName"))}
-          <input type="text" name="name" value="${esc(c.name)}" required>
-        </label>
-        <label class="field" style="flex:2;min-width:210px">${esc(t(lang, "cMain"))}
-          <select name="email">
-            ${c.emails.map(e => `<option value="${esc(e)}"${e === c.email.toLowerCase() ? " selected" : ""}>${esc(e)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="field" style="flex:1;min-width:110px">${esc(t(lang, "cLang"))}
-          <select name="lang">${langOpts(c.lang || "")}</select>
-        </label>
-        <div class="row" style="gap:4px">
-          <button class="btn btn-sm" type="submit">${esc(t(lang, "cSave"))}</button>
-          <button class="btn btn-sm btn-text btn-danger" type="submit"
-                  formaction="/admin/contacts/${esc(c.id)}/delete" formnovalidate
-                  onclick="return confirm(${esc(JSON.stringify(t(lang, "cConfirmDelete")))})"
-            >${esc(t(lang, "cDelete"))}</button>
-        </div>
+      <input type="text" name="name" value="${esc(c.name)}" required
+             aria-label="${esc(t(lang, "cName"))}">
+      <select name="email" aria-label="${esc(t(lang, "cMain"))}">
+        ${c.emails.map(e => `<option value="${esc(e)}"${e === c.email.toLowerCase() ? " selected" : ""}>${esc(e)}</option>`).join("")}
+      </select>
+      <select name="lang" aria-label="${esc(t(lang, "cLang"))}">${langOpts(c.lang || "")}</select>
+      <select name="group" aria-label="${esc(t(lang, "cGroup"))}">${groupOpts(mine ? mine.id : "")}</select>
+      <div class="acts">
+        <button class="btn btn-sm btn-text more-btn" type="button"
+                aria-label="${esc(t(lang, "cAddEmail"))}" title="${esc(t(lang, "cAddEmail"))}">&plus;</button>
+        <button class="btn btn-sm" type="submit">${esc(t(lang, "cSave"))}</button>
+        <button class="btn btn-sm btn-text btn-danger" type="submit"
+                formaction="/admin/contacts/${esc(c.id)}/delete" formnovalidate
+                onclick="return confirm(${esc(JSON.stringify(t(lang, "cConfirmDelete")))})"
+          >${esc(t(lang, "cDelete"))}</button>
       </div>
-      <div class="contact-side">
-        ${groupChips(memberOf)}
+      <div class="more" hidden>
         ${others.map(e => `<span class="tag">${esc(e)}
           <button type="submit" name="drop" value="${esc(e)}" formnovalidate
                   formaction="/admin/contacts/${esc(c.id)}/email"
                   aria-label="${esc(t(lang, "cDropEmail"))}" title="${esc(t(lang, "cDropEmail"))}">&times;</button>
         </span>`).join("")}
-        <input type="email" name="addEmail" class="add-email"
-               placeholder="${esc(t(lang, "cAddEmail"))}">
+        <input type="email" name="addEmail" placeholder="${esc(t(lang, "cAddEmail"))}">
       </div>
     </form>`;
-  }).join("") : `<p class="hint">${esc(t(lang, "cEmpty"))}</p>`;
+  }).join("");
+
+  const table = contacts.length ? `
+    <div class="ctable">
+      <div class="chead">
+        <span>${esc(t(lang, "cName"))}</span>
+        <span>${esc(t(lang, "cMain"))}</span>
+        <span>${esc(t(lang, "cLang"))}</span>
+        <span>${esc(t(lang, "cGroup"))}</span>
+        <span></span>
+      </div>
+      ${rows}
+    </div>`
+    : `<p class="hint">${esc(t(lang, "cEmpty"))}</p>`;
 
   const body = `
   ${flash ? `<div class="notice ok" style="margin-bottom:16px">${esc(flash)}</div>` : ""}
   <div class="stack">
     <div class="row"><a class="btn btn-text btn-sm" href="/admin">&larr; ${esc(t(lang, "back"))}</a></div>
     ${dupCard}
+
+    <section class="card">
+      <div class="card-head">
+        <h2>${esc(t(lang, "contactsTitle"))}</h2>
+        <span class="sub">${esc(nPeople(contacts.length, "cCount"))}</span>
+      </div>
+      <div class="card-body">
+        <p class="hint">${esc(t(lang, "cHint"))}</p>
+        <input type="search" id="cSearch" placeholder="${esc(t(lang, "pickSearch"))}" autocomplete="off">
+        <div id="cList">${table}</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>${esc(t(lang, "cNew"))}</h2></div>
+      <form class="card-body" method="post" action="/admin/contacts">
+        <div class="row">
+          <label class="field" style="flex:2;min-width:160px">${esc(t(lang, "cName"))}
+            <input type="text" name="name" required>
+          </label>
+          <label class="field" style="flex:2;min-width:200px">${esc(t(lang, "cMain"))}
+            <input type="email" name="email" required>
+          </label>
+          <label class="field" style="flex:1;min-width:110px">${esc(t(lang, "cLang"))}
+            <select name="lang">${langOpts("")}</select>
+          </label>
+          <label class="field" style="flex:1;min-width:130px">${esc(t(lang, "cGroup"))}
+            <select name="group">${groupOpts("")}</select>
+          </label>
+        </div>
+        <div><button class="btn btn-primary" type="submit">${esc(t(lang, "cAdd"))}</button></div>
+      </form>
+    </section>
 
     <section class="card">
       <div class="card-head">
@@ -905,50 +939,23 @@ export function adminContacts(lang, contacts, groups, pairs, flash) {
         </form>
       </div>
     </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>${esc(t(lang, "contactsTitle"))}</h2>
-        <span class="sub">${esc(nPeople(contacts.length, "cCount"))}</span>
-      </div>
-      <div class="card-body">
-        <p class="hint">${esc(t(lang, "cHint"))}</p>
-        <input type="search" id="cSearch" placeholder="${esc(t(lang, "pickSearch"))}" autocomplete="off">
-        <div id="cList">${rows}</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2>${esc(t(lang, "cNew"))}</h2></div>
-      <form class="card-body" method="post" action="/admin/contacts">
-        <div class="row">
-          <label class="field" style="flex:2;min-width:170px">${esc(t(lang, "cName"))}
-            <input type="text" name="name" required>
-          </label>
-          <label class="field" style="flex:2;min-width:210px">${esc(t(lang, "cMain"))}
-            <input type="email" name="email" required>
-          </label>
-          <label class="field" style="flex:1;min-width:110px">${esc(t(lang, "cLang"))}
-            <select name="lang">${langOpts("")}</select>
-          </label>
-        </div>
-        ${groupChips([])}
-        <div><button class="btn btn-primary" type="submit">${esc(t(lang, "cAdd"))}</button></div>
-      </form>
-    </section>
   </div>`;
 
   const script = `
   var cs=document.getElementById('cSearch');
   cs.addEventListener('input',function(){
     var q=cs.value.trim().toLowerCase();
-    document.querySelectorAll('#cList .contact-row').forEach(function(r){
+    document.querySelectorAll('#cList .crow').forEach(function(r){
       r.hidden = q!=='' && r.dataset.find.indexOf(q)<0;
     });
   });
-  // A etiqueta acende com a caixa que tem dentro.
-  document.querySelectorAll('.gchip input').forEach(function(b){
-    b.addEventListener('change',function(){ b.parentElement.classList.toggle('on', b.checked); });
+  // Os emails alternativos são caso raro: só aparecem quando se pede.
+  document.querySelectorAll('.crow .more-btn').forEach(function(b){
+    b.addEventListener('click',function(){
+      var m=b.closest('.crow').querySelector('.more');
+      m.hidden=!m.hidden;
+      if(!m.hidden) m.querySelector('input[name=addEmail]').focus();
+    });
   });`;
 
   return layout(lang, t(lang, "contactsTitle"), body, { script, rightSlot: adminNav(lang) });
